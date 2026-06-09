@@ -59,9 +59,8 @@ func (h *HealthChecker) Start(ctx context.Context) {
 		return
 	}
 	h.started = true
-	h.mu.Unlock()
-
 	h.wg.Add(1)
+	h.mu.Unlock()
 	go func() {
 		defer h.wg.Done()
 		ticker := time.NewTicker(h.interval)
@@ -85,7 +84,12 @@ func (h *HealthChecker) Stop() {
 	h.stopOnce.Do(func() {
 		close(h.stopCh)
 	})
-	h.wg.Wait()
+	h.mu.Lock()
+	started := h.started
+	h.mu.Unlock()
+	if started {
+		h.wg.Wait()
+	}
 }
 
 // Failures returns the current consecutive failure count.
