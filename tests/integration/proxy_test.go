@@ -22,8 +22,9 @@ func setupProxyIntegration(t *testing.T) (*proxy.Proxy, *server.Pool, context.Co
 	bus := events.NewBus()
 	cfg := config.ServerConfig{
 		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
 	}
-	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 

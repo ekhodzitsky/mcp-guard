@@ -5,7 +5,7 @@ MCP Process Manager & Proxy — production-ready guardian for MCP servers.
 ## Features
 
 - **Process Pool Management**: Start, monitor, and gracefully restart MCP servers
-- **Health Checks**: Health checks write a ping every 5s; auto-restart triggers when the process exits or stdin becomes unavailable.
+- **Health Checks**: Health checks write a ping every 5s; auto-restart triggers after 3 consecutive failed health checks (~15s of unresponsiveness).
 - **Hard Timeouts**: 30s for tools/call, 10s for tools/list
 - **Audit Logging**: JSON Lines + SQLite for all JSON-RPC traffic
 - **Graceful Shutdown**: SIGTERM → child SIGTERM → SIGKILL after 10s

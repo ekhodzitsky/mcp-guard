@@ -18,8 +18,11 @@ import (
 
 func TestProxyForward(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "cat"}
-	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -41,7 +44,7 @@ func TestProxyForward(t *testing.T) {
 
 func TestProxyForwardUnknownServer(t *testing.T) {
 	bus := events.NewBus()
-	pool := server.NewPool(map[string]config.ServerConfig{}, bus)
+	pool := server.NewPool(map[string]config.ServerConfig{}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -61,8 +64,11 @@ func TestProxyForwardUnknownServer(t *testing.T) {
 
 func TestProxyForwardNotRunning(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "cat"}
-	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -98,8 +104,12 @@ func TestProxyForwardNotRunning(t *testing.T) {
 
 func TestProxyForwardTimeout(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "sleep", Args: []string{"100"}}
-	pool := server.NewPool(map[string]config.ServerConfig{"slow": cfg}, bus)
+	cfg := config.ServerConfig{
+		Command: "sleep",
+		Args:    []string{"100"},
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"slow": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -128,8 +138,11 @@ func TestProxyForwardTimeout(t *testing.T) {
 
 func TestProxyForwardConcurrent(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "cat"}
-	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -159,8 +172,12 @@ func TestProxyForwardConcurrent(t *testing.T) {
 
 func TestProxyForwardContextCancellation(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "sleep", Args: []string{"100"}}
-	pool := server.NewPool(map[string]config.ServerConfig{"slow": cfg}, bus)
+	cfg := config.ServerConfig{
+		Command: "sleep",
+		Args:    []string{"100"},
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"slow": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -202,8 +219,11 @@ func TestProxyForwardContextCancellation(t *testing.T) {
 
 func TestProxyRunBasic(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "cat"}
-	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -232,8 +252,11 @@ func TestProxyRunBasic(t *testing.T) {
 
 func TestProxyRunMalformedJSON(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "cat"}
-	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -262,11 +285,14 @@ func TestProxyRunMalformedJSON(t *testing.T) {
 
 func TestProxyRunDefaultServerEmptyMultiple(t *testing.T) {
 	bus := events.NewBus()
-	cfg := config.ServerConfig{Command: "cat"}
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
 	pool := server.NewPool(map[string]config.ServerConfig{
 		"srv1": cfg,
 		"srv2": cfg,
-	}, bus)
+	}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

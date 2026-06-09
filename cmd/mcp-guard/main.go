@@ -73,7 +73,7 @@ func runWithConfig(configPath string) error {
 		cancel()
 	}()
 
-	pool := server.NewPool(cfg.Servers, bus)
+	pool := server.NewPool(cfg.Servers, bus, cfg.Guard.HealthCheckInterval)
 	if err := pool.Start(ctx); err != nil {
 		return fmt.Errorf("start pool: %w", err)
 	}

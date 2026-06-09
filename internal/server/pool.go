@@ -12,27 +12,29 @@ import (
 
 // Pool manages a collection of MCP server processes.
 type Pool struct {
-	mu        sync.RWMutex
-	config    map[string]config.ServerConfig
-	processes map[string]*Process
-	checkers  map[string]*HealthChecker
-	bus       *events.Bus
-	started   bool
-	cancel    context.CancelFunc
-	restartMu sync.Mutex
+	mu             sync.RWMutex
+	config         map[string]config.ServerConfig
+	processes      map[string]*Process
+	checkers       map[string]*HealthChecker
+	bus            *events.Bus
+	healthInterval time.Duration
+	started        bool
+	cancel         context.CancelFunc
+	restartMu      sync.Mutex
 }
 
 // NewPool creates a new process pool.
-func NewPool(configs map[string]config.ServerConfig, bus *events.Bus) *Pool {
+func NewPool(configs map[string]config.ServerConfig, bus *events.Bus, healthInterval time.Duration) *Pool {
 	cpy := make(map[string]config.ServerConfig, len(configs))
 	for k, v := range configs {
 		cpy[k] = v
 	}
 	return &Pool{
-		config:    cpy,
-		processes: make(map[string]*Process),
-		checkers:  make(map[string]*HealthChecker),
-		bus:       bus,
+		config:         cpy,
+		processes:      make(map[string]*Process),
+		checkers:       make(map[string]*HealthChecker),
+		bus:            bus,
+		healthInterval: healthInterval,
 	}
 }
 
@@ -56,7 +58,7 @@ func (p *Pool) Start(ctx context.Context) error {
 			return fmt.Errorf("start server %q: %w", name, err)
 		}
 
-		checker := NewHealthChecker(proc, p.bus, 5*time.Second, 3)
+		checker := NewHealthChecker(proc, p.bus, p.healthInterval, 3)
 		checker.Start(ctx)
 
 		p.mu.Lock()
@@ -203,7 +205,7 @@ func (p *Pool) Restart(ctx context.Context, name string) error {
 
 	p.mu.Lock()
 	p.processes[name] = newProc
-	newChecker := NewHealthChecker(newProc, p.bus, 5*time.Second, 3)
+	newChecker := NewHealthChecker(newProc, p.bus, p.healthInterval, 3)
 	newChecker.Start(ctx)
 	p.checkers[name] = newChecker
 	p.mu.Unlock()

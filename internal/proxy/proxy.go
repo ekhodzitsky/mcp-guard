@@ -66,10 +66,9 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 	}
 
 	// Determine timeout.
-	timeout := 30 * time.Second
-	switch req.Method {
-	case mcp.MethodToolsList:
-		timeout = 10 * time.Second
+	timeout := proc.TimeoutConfig().ToolsCall
+	if req.Method == mcp.MethodToolsList {
+		timeout = proc.TimeoutConfig().ToolsList
 	}
 
 	// Audit log request.

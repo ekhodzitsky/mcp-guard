@@ -97,7 +97,12 @@ func (p *Process) Start(ctx context.Context) error {
 // readLoop reads lines from the scanner and pushes them to the responses channel.
 // It exits when the scanner returns EOF or error, closing the channel.
 func (p *Process) readLoop() {
+	p.mu.RLock()
 	scanner := p.scanner
+	p.mu.RUnlock()
+	if scanner == nil {
+		return
+	}
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		p.mu.RLock()
@@ -230,4 +235,9 @@ func (p *Process) Responses() <-chan []byte {
 // Name returns the process name.
 func (p *Process) Name() string {
 	return p.name
+}
+
+// TimeoutConfig returns the configured request timeouts for this process.
+func (p *Process) TimeoutConfig() config.TimeoutConfig {
+	return p.cfg.Timeout
 }

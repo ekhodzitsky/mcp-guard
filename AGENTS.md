@@ -17,7 +17,7 @@
 - `proxy.Proxy` — struct that forwards JSON-RPC requests with timeout and audit
 - `events.Bus` — pub/sub event bus for internal communication
 - `audit.Logger` — logs all MCP traffic
-- `HealthChecker` — monitors process health and triggers restarts
+- `HealthChecker` — monitors process health (verifies the process is running and stdin is writable; does not read responses) and triggers restarts
 
 ## Testing
 

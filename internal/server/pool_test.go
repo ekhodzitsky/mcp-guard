@@ -160,7 +160,7 @@ func TestPool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pool := NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+			pool := NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
 			tt.fn(t, pool)
 		})
 	}
@@ -171,7 +171,7 @@ func TestPoolPartialStartFailure(t *testing.T) {
 	pool := NewPool(map[string]config.ServerConfig{
 		"ok":   {Command: "cat"},
 		"fail": {Command: "nonexistent-command-12345"},
-	}, bus)
+	}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -189,7 +189,7 @@ func TestPoolPartialStartFailure(t *testing.T) {
 }
 
 func TestPoolDoubleStartNoLeak(t *testing.T) {
-	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, nil)
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, nil, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -221,7 +221,7 @@ func TestPoolDoubleStartNoLeak(t *testing.T) {
 
 func TestPoolStopClearsMaps(t *testing.T) {
 	bus := events.NewBus()
-	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus)
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -246,7 +246,7 @@ func TestPoolStopClearsMaps(t *testing.T) {
 
 func TestPoolRestartFailureClearsMaps(t *testing.T) {
 	bus := events.NewBus()
-	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus)
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -277,7 +277,7 @@ func TestPoolRestartFailureClearsMaps(t *testing.T) {
 
 func TestPoolConcurrentRestart(t *testing.T) {
 	bus := events.NewBus()
-	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus)
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus, 5*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
