@@ -11,6 +11,11 @@ import (
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
 )
 
+const (
+	EventHealthOK     = "health.ok"
+	EventHealthFailed = "health.failed"
+)
+
 // HealthChecker pings a process periodically and reports health.
 type HealthChecker struct {
 	process     *Process
@@ -20,11 +25,19 @@ type HealthChecker struct {
 	mu          sync.Mutex
 	failures    int
 	stopCh      chan struct{}
+	stopOnce    sync.Once
 	wg          sync.WaitGroup
+	started     bool
 }
 
 // NewHealthChecker creates a health checker.
 func NewHealthChecker(p *Process, bus *events.Bus, interval time.Duration, maxFailures int) *HealthChecker {
+	if p == nil {
+		panic("NewHealthChecker: process is nil")
+	}
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
 	if maxFailures <= 0 {
 		maxFailures = 3
 	}
@@ -38,7 +51,16 @@ func NewHealthChecker(p *Process, bus *events.Bus, interval time.Duration, maxFa
 }
 
 // Start begins health checking in a background goroutine.
+// Start should be called once per instance; subsequent calls are no-ops.
 func (h *HealthChecker) Start(ctx context.Context) {
+	h.mu.Lock()
+	if h.started {
+		h.mu.Unlock()
+		return
+	}
+	h.started = true
+	h.mu.Unlock()
+
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
@@ -60,7 +82,9 @@ func (h *HealthChecker) Start(ctx context.Context) {
 
 // Stop stops the health checker.
 func (h *HealthChecker) Stop() {
-	close(h.stopCh)
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
 	h.wg.Wait()
 }
 
@@ -105,7 +129,7 @@ func (h *HealthChecker) check(ctx context.Context) {
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
-			Type:   "health.ok",
+			Type:   EventHealthOK,
 			Server: h.process.Name(),
 		})
 	}
@@ -119,7 +143,7 @@ func (h *HealthChecker) recordFailure(ctx context.Context, reason string) {
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
-			Type:    "health.failed",
+			Type:    EventHealthFailed,
 			Server:  h.process.Name(),
 			Payload: map[string]any{"reason": reason, "consecutive": failures},
 		})
