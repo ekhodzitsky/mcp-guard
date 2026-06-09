@@ -161,7 +161,7 @@ func (p *Pool) Get(name string) *Process {
 	return p.processes[name]
 }
 
-// Names returns all configured server names.
+// Names returns all currently running server names.
 func (p *Pool) Names() []string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -194,6 +194,10 @@ func (p *Pool) Restart(ctx context.Context, name string) error {
 
 	newProc := NewProcess(name, cfg, p.bus)
 	if err := newProc.Start(ctx); err != nil {
+		p.mu.Lock()
+		delete(p.processes, name)
+		delete(p.checkers, name)
+		p.mu.Unlock()
 		return fmt.Errorf("restart server %q: %w", name, err)
 	}
 
@@ -229,7 +233,7 @@ func (p *Pool) serverRestarter(ctx context.Context, name string) {
 			if checker == nil {
 				continue
 			}
-			if checker.Failures() >= 3 {
+			if checker.Failures() == 3 {
 				go p.attemptRestart(ctx, name)
 			}
 		case <-ctx.Done():

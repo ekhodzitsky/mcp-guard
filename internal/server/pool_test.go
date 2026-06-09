@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,5 +163,145 @@ func TestPool(t *testing.T) {
 			pool := NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
 			tt.fn(t, pool)
 		})
+	}
+}
+
+func TestPoolPartialStartFailure(t *testing.T) {
+	bus := events.NewBus()
+	pool := NewPool(map[string]config.ServerConfig{
+		"ok":   {Command: "cat"},
+		"fail": {Command: "nonexistent-command-12345"},
+	}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err == nil {
+		t.Fatal("expected start error")
+	}
+
+	if pool.Get("ok") != nil {
+		t.Fatal("expected ok process to be cleaned up after partial start failure")
+	}
+	if len(pool.Names()) != 0 {
+		t.Fatalf("expected no running names, got %v", pool.Names())
+	}
+}
+
+func TestPoolDoubleStartNoLeak(t *testing.T) {
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer func() {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelStop()
+		_ = pool.Stop(stopCtx)
+	}()
+
+	// Give goroutines time to settle
+	runtime.Gosched()
+	before := runtime.NumGoroutine()
+
+	if err := pool.Start(ctx); err == nil {
+		t.Fatal("expected error on double start")
+	}
+
+	runtime.Gosched()
+	after := runtime.NumGoroutine()
+
+	if after > before {
+		t.Fatalf("goroutine leak: before=%d after=%d", before, after)
+	}
+}
+
+func TestPoolStopClearsMaps(t *testing.T) {
+	bus := events.NewBus()
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelStop()
+	if err := pool.Stop(stopCtx); err != nil {
+		t.Fatalf("pool stop: %v", err)
+	}
+
+	if pool.Get("echo") != nil {
+		t.Fatal("expected Get to return nil after Stop")
+	}
+	if len(pool.Names()) != 0 {
+		t.Fatalf("expected Names to be empty after Stop, got %v", pool.Names())
+	}
+}
+
+func TestPoolRestartFailureClearsMaps(t *testing.T) {
+	bus := events.NewBus()
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer func() {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelStop()
+		_ = pool.Stop(stopCtx)
+	}()
+
+	// Corrupt the config so restart fails
+	pool.config["echo"] = config.ServerConfig{Command: "nonexistent-command-12345"}
+
+	if err := pool.Restart(ctx, "echo"); err == nil {
+		t.Fatal("expected restart error")
+	}
+
+	if pool.Get("echo") != nil {
+		t.Fatal("expected Get to return nil after failed restart")
+	}
+	if len(pool.Names()) != 0 {
+		t.Fatalf("expected Names to be empty after failed restart, got %v", pool.Names())
+	}
+}
+
+func TestPoolConcurrentRestart(t *testing.T) {
+	bus := events.NewBus()
+	pool := NewPool(map[string]config.ServerConfig{"echo": {Command: "cat"}}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer func() {
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelStop()
+		_ = pool.Stop(stopCtx)
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = pool.Restart(ctx, "echo")
+		}()
+	}
+	wg.Wait()
+
+	if pool.Get("echo") == nil {
+		t.Fatal("expected process after concurrent restarts")
 	}
 }
