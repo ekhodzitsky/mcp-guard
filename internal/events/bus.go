@@ -17,8 +17,9 @@ type Event struct {
 
 // Bus is a pub/sub event bus.
 type Bus struct {
-	mu   sync.RWMutex
-	subs map[string][]chan Event
+	mu     sync.RWMutex
+	subs   map[string][]chan Event
+	closed bool
 }
 
 // NewBus creates a new event bus.
@@ -29,9 +30,14 @@ func NewBus() *Bus {
 }
 
 // Subscribe registers a channel for events on a given server name.
+// Callers must consume events from the returned channel or call Unsubscribe
+// to avoid goroutine leaks.
 func (b *Bus) Subscribe(server string) chan Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		return nil
+	}
 	ch := make(chan Event, defaultBufferSize)
 	b.subs[server] = append(b.subs[server], ch)
 	return ch
@@ -41,6 +47,9 @@ func (b *Bus) Subscribe(server string) chan Event {
 func (b *Bus) Unsubscribe(server string, ch chan Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
 	subs := b.subs[server]
 	for i, c := range subs {
 		if c == ch {
@@ -61,7 +70,12 @@ func (b *Bus) Publish(ctx context.Context, evt Event) {
 	for _, ch := range subs {
 		wg.Add(1)
 		go func(c chan Event) {
-			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					// channel was closed concurrently — safe to ignore
+				}
+				wg.Done()
+			}()
 			select {
 			case c <- evt:
 			case <-ctx.Done():
@@ -75,6 +89,7 @@ func (b *Bus) Publish(ctx context.Context, evt Event) {
 func (b *Bus) Close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.closed = true
 	for _, subs := range b.subs {
 		for _, ch := range subs {
 			close(ch)
