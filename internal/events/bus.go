@@ -6,6 +6,8 @@ import (
 	"sync"
 )
 
+const defaultBufferSize = 16
+
 // Event represents an internal event.
 type Event struct {
 	Type    string
@@ -30,7 +32,7 @@ func NewBus() *Bus {
 func (b *Bus) Subscribe(server string) chan Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	ch := make(chan Event, 16)
+	ch := make(chan Event, defaultBufferSize)
 	b.subs[server] = append(b.subs[server], ch)
 	return ch
 }
@@ -42,7 +44,6 @@ func (b *Bus) Unsubscribe(server string, ch chan Event) {
 	subs := b.subs[server]
 	for i, c := range subs {
 		if c == ch {
-			close(c)
 			b.subs[server] = append(subs[:i], subs[i+1:]...)
 			return
 		}
@@ -56,11 +57,28 @@ func (b *Bus) Publish(ctx context.Context, evt Event) {
 	copy(subs, b.subs[evt.Server])
 	b.mu.RUnlock()
 
+	var wg sync.WaitGroup
 	for _, ch := range subs {
-		select {
-		case ch <- evt:
-		case <-ctx.Done():
-			return
+		wg.Add(1)
+		go func(c chan Event) {
+			defer wg.Done()
+			select {
+			case c <- evt:
+			case <-ctx.Done():
+			}
+		}(ch)
+	}
+	wg.Wait()
+}
+
+// Close locks, clears the map, and closes all remaining channels.
+func (b *Bus) Close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, subs := range b.subs {
+		for _, ch := range subs {
+			close(ch)
 		}
 	}
+	b.subs = make(map[string][]chan Event)
 }
