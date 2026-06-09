@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Validate checks the configuration for errors.
-func Validate(cfg *Config) error {
+// ValidateAndSetDefaults checks the configuration for errors and applies defaults.
+func ValidateAndSetDefaults(cfg *Config) error {
 	if len(cfg.Servers) == 0 {
 		return fmt.Errorf("no servers configured")
 	}
@@ -27,6 +27,10 @@ func Validate(cfg *Config) error {
 		}
 		if sc.Restart.Backoff == "" {
 			sc.Restart.Backoff = "exponential"
+		}
+		validBackoffs := map[string]bool{"exponential": true, "linear": true, "fixed": true}
+		if !validBackoffs[sc.Restart.Backoff] {
+			return fmt.Errorf("server %q: invalid backoff %q, must be one of: exponential, linear, fixed", name, sc.Restart.Backoff)
 		}
 		cfg.Servers[name] = sc
 	}

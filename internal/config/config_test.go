@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -21,7 +23,7 @@ func TestLoadAndValidate(t *testing.T) {
 		},
 	}
 
-	if err := Validate(cfg); err != nil {
+	if err := ValidateAndSetDefaults(cfg); err != nil {
 		t.Fatalf("validation failed: %v", err)
 	}
 }
@@ -32,7 +34,99 @@ func TestValidateEmptyCommand(t *testing.T) {
 			"bad": {Command: ""},
 		},
 	}
-	if err := Validate(cfg); err == nil {
+	if err := ValidateAndSetDefaults(cfg); err == nil {
 		t.Fatal("expected error for empty command")
+	}
+}
+
+func TestLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	content := `
+[server.echo]
+command = "echo"
+args = ["hello"]
+env = { FOO = "bar", HOME_VAR = "$HOME" }
+
+[server.echo.timeout]
+tools_call = "30s"
+tools_list = "10s"
+
+[server.echo.restart]
+max_attempts = 5
+backoff = "exponential"
+
+[guard]
+health_check_interval = "5s"
+max_concurrent_calls = 100
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if len(cfg.Servers) != 1 {
+		t.Fatalf("expected 1 server, got %d", len(cfg.Servers))
+	}
+
+	echo, ok := cfg.Servers["echo"]
+	if !ok {
+		t.Fatal("expected server 'echo'")
+	}
+
+	if echo.Command != "echo" {
+		t.Errorf("expected command 'echo', got %q", echo.Command)
+	}
+	if len(echo.Args) != 1 || echo.Args[0] != "hello" {
+		t.Errorf("expected args ['hello'], got %v", echo.Args)
+	}
+	if echo.Env["FOO"] != "bar" {
+		t.Errorf("expected env FOO='bar', got %q", echo.Env["FOO"])
+	}
+
+	// Test env expansion in server env map
+	if home := os.Getenv("HOME"); home != "" {
+		if echo.Env["HOME_VAR"] != home {
+			t.Errorf("expected env HOME_VAR='%s', got %q", home, echo.Env["HOME_VAR"])
+		}
+	}
+
+	if echo.Timeout.ToolsCall != 30*time.Second {
+		t.Errorf("expected tools_call timeout 30s, got %v", echo.Timeout.ToolsCall)
+	}
+	if echo.Timeout.ToolsList != 10*time.Second {
+		t.Errorf("expected tools_list timeout 10s, got %v", echo.Timeout.ToolsList)
+	}
+	if echo.Restart.MaxAttempts != 5 {
+		t.Errorf("expected max_attempts 5, got %d", echo.Restart.MaxAttempts)
+	}
+	if echo.Restart.Backoff != "exponential" {
+		t.Errorf("expected backoff 'exponential', got %q", echo.Restart.Backoff)
+	}
+
+	if cfg.Guard.HealthCheckInterval != 5*time.Second {
+		t.Errorf("expected health_check_interval 5s, got %v", cfg.Guard.HealthCheckInterval)
+	}
+	if cfg.Guard.MaxConcurrentCalls != 100 {
+		t.Errorf("expected max_concurrent_calls 100, got %d", cfg.Guard.MaxConcurrentCalls)
+	}
+}
+
+func TestValidateAndSetDefaultsInvalidBackoff(t *testing.T) {
+	cfg := &Config{
+		Servers: map[string]ServerConfig{
+			"bad": {
+				Command: "echo",
+				Restart: RestartConfig{MaxAttempts: 1, Backoff: "invalid"},
+			},
+		},
+	}
+	if err := ValidateAndSetDefaults(cfg); err == nil {
+		t.Fatal("expected error for invalid backoff")
 	}
 }

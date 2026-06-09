@@ -82,16 +82,27 @@ func Load(path string) (*Config, error) {
 	}
 
 	if cfg.Guard.AuditLogPath != "" {
-		cfg.Guard.AuditLogPath = expandHome(cfg.Guard.AuditLogPath)
+		expanded, err := expandHome(cfg.Guard.AuditLogPath)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Guard.AuditLogPath = expanded
+	}
+
+	if err := ValidateAndSetDefaults(&cfg); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
 	}
 
 	return &cfg, nil
 }
 
-func expandHome(path string) string {
+func expandHome(path string) (string, error) {
 	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand home: %w", err)
+		}
+		return filepath.Join(home, path[2:]), nil
 	}
-	return path
+	return path, nil
 }
