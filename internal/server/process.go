@@ -23,6 +23,7 @@ type Process struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	stdout  io.ReadCloser
+	scanner *bufio.Scanner
 	mu      sync.RWMutex
 	running bool
 }
@@ -76,6 +77,7 @@ func (p *Process) Start(ctx context.Context) error {
 	p.cmd = cmd
 	p.stdin = stdin
 	p.stdout = stdout
+	p.scanner = bufio.NewScanner(stdout)
 	p.running = true
 
 	if p.bus != nil {
@@ -159,6 +161,7 @@ func (p *Process) cleanupAfterStop(stdin io.WriteCloser, stdout io.ReadCloser) {
 	}
 	p.stdin = nil
 	p.stdout = nil
+	p.scanner = nil
 	p.mu.Unlock()
 }
 
@@ -183,14 +186,11 @@ func (p *Process) Stdout() io.ReadCloser {
 	return p.stdout
 }
 
-// Scanner returns a bufio.Scanner over the process stdout.
+// Scanner returns the process stdout scanner.
 func (p *Process) Scanner() *bufio.Scanner {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.stdout == nil {
-		return nil
-	}
-	return bufio.NewScanner(p.stdout)
+	return p.scanner
 }
 
 // Name returns the process name.

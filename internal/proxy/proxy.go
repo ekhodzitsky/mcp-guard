@@ -74,12 +74,14 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 
 	// Audit log request.
 	if p.logger != nil {
-		_ = p.logger.Log(ctx, audit.LogEntry{
+		if err := p.logger.Log(ctx, audit.LogEntry{
 			Timestamp: time.Now().UTC(),
 			Server:    serverName,
 			Direction: "request",
 			Message:   req,
-		})
+		}); err != nil {
+			slog.Warn("audit log request failed", "error", err)
+		}
 	}
 
 	resp, err := WithTimeout(ctx, timeout, func(ctx context.Context) (mcp.JSONRPCResponse, error) {
@@ -91,12 +93,14 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 
 	// Audit log response.
 	if p.logger != nil {
-		_ = p.logger.Log(ctx, audit.LogEntry{
+		if err := p.logger.Log(ctx, audit.LogEntry{
 			Timestamp: time.Now().UTC(),
 			Server:    serverName,
 			Direction: "response",
 			Message:   resp,
-		})
+		}); err != nil {
+			slog.Warn("audit log response failed", "error", err)
+		}
 	}
 
 	return resp, nil
@@ -125,6 +129,8 @@ func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSO
 	}
 
 	// Use a channel to read the response so we can respect context cancellation.
+	// Note: the goroutine below is not directly cancellable. Since we now use a
+	// single per-process scanner, it will exit when the process responds or dies.
 	type result struct {
 		resp mcp.JSONRPCResponse
 		err  error
@@ -202,7 +208,9 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 				},
 			}
 			b, _ := json.Marshal(errResp)
-			fmt.Fprintln(stdout, string(b))
+			if _, werr := fmt.Fprintln(stdout, string(b)); werr != nil {
+				return fmt.Errorf("write error response: %w", werr)
+			}
 			continue
 		}
 
@@ -212,6 +220,8 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 			slog.Error("marshal response", "error", err)
 			continue
 		}
-		fmt.Fprintln(stdout, string(b))
+		if _, werr := fmt.Fprintln(stdout, string(b)); werr != nil {
+			return fmt.Errorf("write response: %w", werr)
+		}
 	}
 }
