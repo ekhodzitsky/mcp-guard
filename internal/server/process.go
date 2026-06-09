@@ -37,6 +37,8 @@ func NewProcess(name string, cfg config.ServerConfig, bus *events.Bus) *Process 
 }
 
 // Start launches the server process.
+// The provided ctx must remain valid for the lifetime of the process;
+// cancelling it prematurely will kill the process.
 func (p *Process) Start(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -60,11 +62,14 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = stdin.Close()
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
 		return fmt.Errorf("start command: %w", err)
 	}
 
@@ -88,6 +93,8 @@ func (p *Process) Stop(ctx context.Context) error {
 	p.mu.Lock()
 	cmd := p.cmd
 	running := p.running
+	stdin := p.stdin
+	stdout := p.stdout
 	p.mu.Unlock()
 
 	if !running || cmd == nil {
@@ -104,29 +111,49 @@ func (p *Process) Stop(ctx context.Context) error {
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		p.cleanupAfterStop(stdin, stdout)
+
+		if p.bus != nil {
+			p.bus.Publish(ctx, events.Event{
+				Type:   "process.stopped",
+				Server: p.name,
+			})
+		}
+
+		return err
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 		<-done
-	}
 
+		p.cleanupAfterStop(stdin, stdout)
+
+		if p.bus != nil {
+			p.bus.Publish(ctx, events.Event{
+				Type:   "process.stopped",
+				Server: p.name,
+			})
+		}
+
+		return ctx.Err()
+	}
+}
+
+func (p *Process) cleanupAfterStop(stdin io.WriteCloser, stdout io.ReadCloser) {
 	p.mu.Lock()
 	p.running = false
 	p.cmd = nil
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	if stdout != nil {
+		_ = stdout.Close()
+	}
 	p.stdin = nil
 	p.stdout = nil
 	p.mu.Unlock()
-
-	if p.bus != nil {
-		p.bus.Publish(ctx, events.Event{
-			Type:   "process.stopped",
-			Server: p.name,
-		})
-	}
-
-	return nil
 }
 
 // Running reports whether the process is active.
@@ -154,6 +181,9 @@ func (p *Process) Stdout() io.ReadCloser {
 func (p *Process) Scanner() *bufio.Scanner {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	if p.stdout == nil {
+		return nil
+	}
 	return bufio.NewScanner(p.stdout)
 }
 
