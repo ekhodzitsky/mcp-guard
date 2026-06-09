@@ -55,7 +55,10 @@ func TestProxyWithCat(t *testing.T) {
 	if resp.JSONRPC != "2.0" {
 		t.Fatalf("expected jsonrpc 2.0, got %s", resp.JSONRPC)
 	}
-	reqID, _ := req.ID.(int)
+	reqID, ok := req.ID.(int)
+	if !ok {
+		t.Fatalf("expected req.ID to be int, got %T", req.ID)
+	}
 	if resp.ID != float64(reqID) {
 		t.Fatalf("expected id %v, got %v", req.ID, resp.ID)
 	}
@@ -107,5 +110,15 @@ func TestProxyRunLoop(t *testing.T) {
 
 	if resp.JSONRPC != "2.0" {
 		t.Fatalf("expected jsonrpc 2.0, got %s", resp.JSONRPC)
+	}
+	reqID, ok := req.ID.(int)
+	if !ok {
+		t.Fatalf("expected req.ID to be int, got %T", req.ID)
+	}
+	if resp.ID != float64(reqID) {
+		t.Fatalf("expected id %v, got %v", req.ID, resp.ID)
+	}
+	if resp.Error != nil {
+		t.Fatalf("expected no error, got %v", resp.Error)
 	}
 }
