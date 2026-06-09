@@ -4,6 +4,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,10 +39,14 @@ func NewMultiLogger(loggers ...Logger) *MultiLogger {
 
 // Log writes to all backends.
 func (m *MultiLogger) Log(ctx context.Context, entry LogEntry) error {
+	var errs []error
 	for _, l := range m.loggers {
 		if err := l.Log(ctx, entry); err != nil {
-			return fmt.Errorf("audit log: %w", err)
+			errs = append(errs, err)
 		}
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -55,7 +60,7 @@ func (m *MultiLogger) Close() error {
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("close audit loggers: %v", errs)
+		return errors.Join(errs...)
 	}
 	return nil
 }
@@ -64,6 +69,7 @@ func (m *MultiLogger) Close() error {
 type JSONLinesLogger struct {
 	mu     sync.Mutex
 	writer io.WriteCloser
+	closed bool
 }
 
 // NewJSONLinesLogger creates a JSON Lines audit logger.
@@ -82,15 +88,16 @@ func NewJSONLinesLogger(path string) (*JSONLinesLogger, error) {
 func (j *JSONLinesLogger) Log(_ context.Context, entry LogEntry) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.closed {
+		return errors.New("jsonlines logger: already closed")
+	}
 	b, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("marshal audit entry: %w", err)
 	}
+	b = append(b, '\n')
 	if _, err := j.writer.Write(b); err != nil {
 		return fmt.Errorf("write audit entry: %w", err)
-	}
-	if _, err := j.writer.Write([]byte("\n")); err != nil {
-		return fmt.Errorf("write newline: %w", err)
 	}
 	return nil
 }
@@ -99,5 +106,9 @@ func (j *JSONLinesLogger) Log(_ context.Context, entry LogEntry) error {
 func (j *JSONLinesLogger) Close() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.closed {
+		return errors.New("jsonlines logger: already closed")
+	}
+	j.closed = true
 	return j.writer.Close()
 }

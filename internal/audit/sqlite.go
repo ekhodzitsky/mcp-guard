@@ -42,12 +42,12 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 }
 
 // Log inserts an entry into SQLite.
-func (s *SQLiteStore) Log(_ context.Context, entry LogEntry) error {
+func (s *SQLiteStore) Log(ctx context.Context, entry LogEntry) error {
 	b, err := json.Marshal(entry.Message)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
-	_, err = s.db.Exec(
+	_, err = s.db.ExecContext(ctx,
 		"INSERT INTO audit_log (timestamp, server, direction, message) VALUES (?, ?, ?, ?)",
 		entry.Timestamp.Format(time.RFC3339Nano),
 		entry.Server,
