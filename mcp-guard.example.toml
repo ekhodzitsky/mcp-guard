@@ -1,10 +1,19 @@
+# Server names (e.g., "echo") are arbitrary user-defined identifiers.
+# They are used to reference the server in logs, metrics, and the guard's routing table.
 [server.echo]
+# command: the executable to run for this MCP server.
 command = "npx"
+# args: command-line arguments passed to the executable above.
 args = ["-y", "@modelcontextprotocol/server-echo"]
+# timeout: per-RPC timeouts. tools_call applies to tool/call, tools_list to tools/list.
 timeout = { tools_call = "30s", tools_list = "10s" }
+# restart: automatic restart policy when the server crashes or becomes unresponsive.
 restart = { max_attempts = 5, backoff = "exponential" }
 
 [guard]
+# health_check_interval: how often the guard pings each server to verify liveness.
 health_check_interval = "5s"
+# audit_log_path: directory where JSON audit logs are written. "~" is expanded by the application to $HOME.
 audit_log_path = "~/.mcp-guard/audit"
+# max_concurrent_calls: global limit on simultaneous in-flight MCP tool calls.
 max_concurrent_calls = 100
