@@ -13,16 +13,23 @@ import (
 // Pool manages a collection of MCP server processes.
 type Pool struct {
 	mu        sync.RWMutex
-	configs   map[string]config.ServerConfig
+	config    map[string]config.ServerConfig
 	processes map[string]*Process
 	checkers  map[string]*HealthChecker
 	bus       *events.Bus
+	started   bool
+	cancel    context.CancelFunc
+	restartMu sync.Mutex
 }
 
 // NewPool creates a new process pool.
 func NewPool(configs map[string]config.ServerConfig, bus *events.Bus) *Pool {
+	cpy := make(map[string]config.ServerConfig, len(configs))
+	for k, v := range configs {
+		cpy[k] = v
+	}
 	return &Pool{
-		configs:   configs,
+		config:    cpy,
 		processes: make(map[string]*Process),
 		checkers:  make(map[string]*HealthChecker),
 		bus:       bus,
@@ -32,28 +39,79 @@ func NewPool(configs map[string]config.ServerConfig, bus *events.Bus) *Pool {
 // Start launches all configured servers and their health checkers.
 func (p *Pool) Start(ctx context.Context) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	if p.started {
+		p.mu.Unlock()
+		return fmt.Errorf("pool already started")
+	}
+	p.started = true
+	startCtx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+	p.mu.Unlock()
 
-	for name, cfg := range p.configs {
+	var started []string
+	for name, cfg := range p.config {
 		proc := NewProcess(name, cfg, p.bus)
 		if err := proc.Start(ctx); err != nil {
+			p.cleanupOnStartFailure(started)
 			return fmt.Errorf("start server %q: %w", name, err)
 		}
-		p.processes[name] = proc
 
 		checker := NewHealthChecker(proc, p.bus, 5*time.Second, 3)
 		checker.Start(ctx)
+
+		p.mu.Lock()
+		p.processes[name] = proc
 		p.checkers[name] = checker
+		p.mu.Unlock()
+		started = append(started, name)
+
+		if p.bus != nil {
+			go p.serverRestarter(startCtx, name)
+		}
 	}
 
-	go p.restarter(ctx)
-
 	return nil
+}
+
+func (p *Pool) cleanupOnStartFailure(started []string) {
+	p.mu.Lock()
+	if p.cancel != nil {
+		p.cancel()
+	}
+	processes := make(map[string]*Process, len(started))
+	checkers := make(map[string]*HealthChecker, len(started))
+	for _, name := range started {
+		processes[name] = p.processes[name]
+		checkers[name] = p.checkers[name]
+	}
+	p.processes = make(map[string]*Process)
+	p.checkers = make(map[string]*HealthChecker)
+	p.started = false
+	p.cancel = nil
+	p.mu.Unlock()
+
+	for _, c := range checkers {
+		c.Stop()
+	}
+	var wg sync.WaitGroup
+	for _, proc := range processes {
+		wg.Add(1)
+		go func(pr *Process) {
+			defer wg.Done()
+			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = pr.Stop(stopCtx)
+		}(proc)
+	}
+	wg.Wait()
 }
 
 // Stop gracefully stops all processes.
 func (p *Pool) Stop(ctx context.Context) error {
 	p.mu.Lock()
+	if p.cancel != nil {
+		p.cancel()
+	}
 	checkers := make(map[string]*HealthChecker, len(p.checkers))
 	for k, v := range p.checkers {
 		checkers[k] = v
@@ -62,6 +120,10 @@ func (p *Pool) Stop(ctx context.Context) error {
 	for k, v := range p.processes {
 		processes[k] = v
 	}
+	p.processes = make(map[string]*Process)
+	p.checkers = make(map[string]*HealthChecker)
+	p.started = false
+	p.cancel = nil
 	p.mu.Unlock()
 
 	for _, c := range checkers {
@@ -112,11 +174,14 @@ func (p *Pool) Names() []string {
 
 // Restart restarts a single server with exponential backoff.
 func (p *Pool) Restart(ctx context.Context, name string) error {
-	p.mu.Lock()
+	p.restartMu.Lock()
+	defer p.restartMu.Unlock()
+
+	p.mu.RLock()
 	proc := p.processes[name]
 	checker := p.checkers[name]
-	cfg := p.configs[name]
-	p.mu.Unlock()
+	cfg := p.config[name]
+	p.mu.RUnlock()
 
 	if checker != nil {
 		checker.Stop()
@@ -142,12 +207,12 @@ func (p *Pool) Restart(ctx context.Context, name string) error {
 	return nil
 }
 
-func (p *Pool) restarter(ctx context.Context) {
+func (p *Pool) serverRestarter(ctx context.Context, name string) {
 	if p.bus == nil {
 		return
 	}
-	ch := p.bus.Subscribe("")
-	defer p.bus.Unsubscribe("", ch)
+	ch := p.bus.Subscribe(name)
+	defer p.bus.Unsubscribe(name, ch)
 
 	for {
 		select {
@@ -159,13 +224,13 @@ func (p *Pool) restarter(ctx context.Context) {
 				continue
 			}
 			p.mu.RLock()
-			checker := p.checkers[evt.Server]
+			checker := p.checkers[name]
 			p.mu.RUnlock()
 			if checker == nil {
 				continue
 			}
 			if checker.Failures() >= 3 {
-				go p.attemptRestart(ctx, evt.Server)
+				go p.attemptRestart(ctx, name)
 			}
 		case <-ctx.Done():
 			return
@@ -174,7 +239,7 @@ func (p *Pool) restarter(ctx context.Context) {
 }
 
 func (p *Pool) attemptRestart(ctx context.Context, name string) {
-	cfg := p.configs[name]
+	cfg := p.config[name]
 	backoff := time.Second
 	for i := 0; i < cfg.Restart.MaxAttempts; i++ {
 		if err := p.Restart(ctx, name); err == nil {
