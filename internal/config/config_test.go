@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestLoadAndValidate(t *testing.T) {
+func TestValidateAndSetDefaults(t *testing.T) {
 	cfg := &Config{
 		Servers: map[string]ServerConfig{
 			"echo": {
@@ -60,6 +60,7 @@ backoff = "exponential"
 [guard]
 health_check_interval = "5s"
 max_concurrent_calls = 100
+audit_log_path = "~/mcp-guard-test-audit"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write config file: %v", err)
@@ -114,6 +115,49 @@ max_concurrent_calls = 100
 	}
 	if cfg.Guard.MaxConcurrentCalls != 100 {
 		t.Errorf("expected max_concurrent_calls 100, got %d", cfg.Guard.MaxConcurrentCalls)
+	}
+
+	// Test ~ expansion in audit_log_path
+	if home := os.Getenv("HOME"); home != "" {
+		expectedPath := filepath.Join(home, "mcp-guard-test-audit")
+		if cfg.Guard.AuditLogPath != expectedPath {
+			t.Errorf("expected audit_log_path %q, got %q", expectedPath, cfg.Guard.AuditLogPath)
+		}
+	}
+}
+
+func TestLoadNonexistentFile(t *testing.T) {
+	_, err := Load("/nonexistent/path/config.toml")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file")
+	}
+}
+
+func TestLoadInvalidTOML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("not valid toml {{"), 0644); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid TOML")
+	}
+}
+
+func TestLoadEmptyCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	content := `
+[server.bad]
+command = ""
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for empty command")
 	}
 }
 

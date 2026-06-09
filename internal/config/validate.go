@@ -12,6 +12,7 @@ func ValidateAndSetDefaults(cfg *Config) error {
 		return fmt.Errorf("no servers configured")
 	}
 
+	validBackoffs := map[string]bool{"exponential": true, "linear": true, "fixed": true}
 	for name, sc := range cfg.Servers {
 		if strings.TrimSpace(sc.Command) == "" {
 			return fmt.Errorf("server %q: command is required", name)
@@ -28,7 +29,6 @@ func ValidateAndSetDefaults(cfg *Config) error {
 		if sc.Restart.Backoff == "" {
 			sc.Restart.Backoff = "exponential"
 		}
-		validBackoffs := map[string]bool{"exponential": true, "linear": true, "fixed": true}
 		if !validBackoffs[sc.Restart.Backoff] {
 			return fmt.Errorf("server %q: invalid backoff %q, must be one of: exponential, linear, fixed", name, sc.Restart.Backoff)
 		}
