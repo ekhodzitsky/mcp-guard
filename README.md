@@ -5,10 +5,10 @@ MCP Process Manager & Proxy — production-ready guardian for MCP servers.
 ## Features
 
 - **Process Pool Management**: Start, monitor, and gracefully restart MCP servers
-- **Health Checks**: Ping every 5s, auto-restart after 3 failures with exponential backoff
+- **Health Checks**: Health checks write a ping every 5s; auto-restart triggers when the process exits or stdin becomes unavailable.
 - **Hard Timeouts**: 30s for tools/call, 10s for tools/list
 - **Audit Logging**: JSON Lines + SQLite for all JSON-RPC traffic
-- **Graceful Shutdown**: SIGTERM → child SIGTERM → SIGKILL after 5s
+- **Graceful Shutdown**: SIGTERM → child SIGTERM → SIGKILL after 10s
 
 ## Installation
 
@@ -24,7 +24,6 @@ Create a `mcp-guard.toml`:
 [server.echo]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-echo"]
-timeout = { tools_call = "30s", tools_list = "10s" }
 restart = { max_attempts = 5, backoff = "exponential" }
 
 [guard]
@@ -51,8 +50,11 @@ Client stdout ← mcp-guard proxy ← Server stdout
 
 ## Development
 
+Requires Go 1.23+.
+
 ```bash
-make test   # Run tests with race detector
+make test   # Run tests
+make race   # Run tests with race detector
 make lint   # Run golangci-lint
 make build  # Build binary
 make clean  # Remove binary

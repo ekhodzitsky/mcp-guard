@@ -10,11 +10,14 @@
 - `internal/proxy/` — JSON-RPC stdio proxy with timeout enforcement
 - `internal/audit/` — JSON Lines + SQLite audit logging
 
-## Key Interfaces
+## Key Types
 
-- `server.Pool` — manages `Process` instances
-- `proxy.Proxy` — forwards JSON-RPC requests with timeout and audit
+- `server.Pool` — struct that manages `Process` instances
+- `server.Process` — struct representing a single MCP server process
+- `proxy.Proxy` — struct that forwards JSON-RPC requests with timeout and audit
+- `events.Bus` — pub/sub event bus for internal communication
 - `audit.Logger` — logs all MCP traffic
+- `HealthChecker` — monitors process health and triggers restarts
 
 ## Testing
 
@@ -25,7 +28,7 @@
 ## Build
 
 ```bash
-make test
+make race
 make lint
 make build
 ```
