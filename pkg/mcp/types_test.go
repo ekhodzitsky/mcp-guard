@@ -62,6 +62,31 @@ func TestJSONRPCRequest(t *testing.T) {
 			if got.Method != tt.req.Method {
 				t.Fatalf("method = %s, want %s", got.Method, tt.req.Method)
 			}
+			if tt.name == "full request marshal/unmarshal" {
+				// encoding/json unmarshals numbers into float64 when the target type is any.
+				if got.ID != float64(1) {
+					t.Fatalf("id = %v (type %T), want float64(1)", got.ID, got.ID)
+				}
+				if string(got.Params) != `{"name":"test"}` {
+					t.Fatalf("params = %s, want {\"name\":\"test\"}", got.Params)
+				}
+			}
+			if tt.name == "notification nil id" {
+				if got.ID != nil {
+					t.Fatalf("id = %v, want nil", got.ID)
+				}
+				if got.Params != nil {
+					t.Fatalf("params = %s, want nil", got.Params)
+				}
+			}
+			if tt.name == "string id" {
+				if got.ID != "abc" {
+					t.Fatalf("id = %v, want abc", got.ID)
+				}
+				if got.Params != nil {
+					t.Fatalf("params = %s, want nil", got.Params)
+				}
+			}
 		})
 	}
 }
@@ -119,41 +144,123 @@ func TestJSONRPCResponse(t *testing.T) {
 }
 
 func TestJSONRPCError(t *testing.T) {
-	errObj := &JSONRPCError{
-		Code:    -32600,
-		Message: "Invalid Request",
-		Data:    json.RawMessage(`{"detail":"missing method"}`),
+	tests := []struct {
+		name    string
+		errObj  *JSONRPCError
+		want    string
+		wantErr bool
+		check   func(t *testing.T, got JSONRPCError)
+	}{
+		{
+			name: "standard marshal/unmarshal",
+			errObj: &JSONRPCError{
+				Code:    -32600,
+				Message: "Invalid Request",
+				Data:    json.RawMessage(`{"detail":"missing method"}`),
+			},
+			want: `{"code":-32600,"message":"Invalid Request","data":{"detail":"missing method"}}`,
+			check: func(t *testing.T, got JSONRPCError) {
+				if got.Code != -32600 {
+					t.Fatalf("code = %d, want -32600", got.Code)
+				}
+				if got.Message != "Invalid Request" {
+					t.Fatalf("message = %s, want Invalid Request", got.Message)
+				}
+				if string(got.Data) != `{"detail":"missing method"}` {
+					t.Fatalf("data = %s, want {\"detail\":\"missing method\"}", got.Data)
+				}
+			},
+		},
+		{
+			name:    "nil receiver Error() does not panic",
+			errObj:  nil,
+			wantErr: true,
+			check: func(t *testing.T, got JSONRPCError) {
+				var e *JSONRPCError
+				if e.Error() != "" {
+					t.Fatalf("expected empty string from nil receiver, got %q", e.Error())
+				}
+			},
+		},
+		{
+			name: "nil Data omitempty",
+			errObj: &JSONRPCError{
+				Code:    -32601,
+				Message: "Method not found",
+			},
+			want: `{"code":-32601,"message":"Method not found"}`,
+			check: func(t *testing.T, got JSONRPCError) {
+				if got.Data != nil {
+					t.Fatalf("data = %s, want nil", got.Data)
+				}
+			},
+		},
+		{
+			name: "boundary code 0",
+			errObj: &JSONRPCError{
+				Code:    0,
+				Message: "zero code",
+			},
+			want: `{"code":0,"message":"zero code"}`,
+			check: func(t *testing.T, got JSONRPCError) {
+				if got.Code != 0 {
+					t.Fatalf("code = %d, want 0", got.Code)
+				}
+			},
+		},
+		{
+			name: "boundary code -32700",
+			errObj: &JSONRPCError{
+				Code:    -32700,
+				Message: "Parse error",
+			},
+			want: `{"code":-32700,"message":"Parse error"}`,
+			check: func(t *testing.T, got JSONRPCError) {
+				if got.Code != -32700 {
+					t.Fatalf("code = %d, want -32700", got.Code)
+				}
+			},
+		},
+		{
+			name: "boundary code 32000",
+			errObj: &JSONRPCError{
+				Code:    32000,
+				Message: "Server error",
+			},
+			want: `{"code":32000,"message":"Server error"}`,
+			check: func(t *testing.T, got JSONRPCError) {
+				if got.Code != 32000 {
+					t.Fatalf("code = %d, want 32000", got.Code)
+				}
+			},
+		},
 	}
 
-	b, err := json.Marshal(errObj)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.errObj == nil {
+				if tt.check != nil {
+					tt.check(t, JSONRPCError{})
+				}
+				return
+			}
 
-	want := `{"code":-32600,"message":"Invalid Request","data":{"detail":"missing method"}}`
-	if string(b) != want {
-		t.Fatalf("marshal = %s, want %s", b, want)
-	}
+			b, err := json.Marshal(tt.errObj)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("marshal error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if string(b) != tt.want {
+				t.Fatalf("marshal = %s, want %s", b, tt.want)
+			}
 
-	var got JSONRPCError
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if got.Code != errObj.Code {
-		t.Fatalf("code = %d, want %d", got.Code, errObj.Code)
-	}
-	if got.Message != errObj.Message {
-		t.Fatalf("message = %s, want %s", got.Message, errObj.Message)
-	}
-	if string(got.Data) != string(errObj.Data) {
-		t.Fatalf("data = %s, want %s", got.Data, errObj.Data)
-	}
-}
-
-func TestJSONRPCErrorNilReceiver(t *testing.T) {
-	var e *JSONRPCError
-	if e.Error() != "" {
-		t.Fatalf("expected empty string from nil receiver, got %q", e.Error())
+			var got JSONRPCError
+			if err := json.Unmarshal(b, &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if tt.check != nil {
+				tt.check(t, got)
+			}
+		})
 	}
 }
 
