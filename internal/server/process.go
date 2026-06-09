@@ -121,6 +121,12 @@ func (p *Process) Stop(ctx context.Context) error {
 			})
 		}
 
+		// Intentional signal termination is not an error.
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+				return nil
+			}
+		}
 		return err
 	case <-ctx.Done():
 		if cmd.Process != nil {
