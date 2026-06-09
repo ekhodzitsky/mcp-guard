@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -125,6 +126,80 @@ func TestProxyForwardTimeout(t *testing.T) {
 	}
 }
 
+func TestProxyForwardConcurrent(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{Command: "cat"}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer pool.Stop(ctx)
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	p := NewProxy(pool, logger, nil)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: id, Method: mcp.MethodPing}
+			_, err := p.Forward(ctx, "echo", req)
+			if err != nil {
+				t.Errorf("forward %d: %v", id, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestProxyForwardContextCancellation(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{Command: "sleep", Args: []string{"100"}}
+	pool := server.NewPool(map[string]config.ServerConfig{"slow": cfg}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer pool.Stop(ctx)
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	p := NewProxy(pool, logger, nil)
+
+	reqCtx, reqCancel := context.WithCancel(ctx)
+	defer reqCancel()
+
+	req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: mcp.MethodPing}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := p.Forward(reqCtx, "slow", req)
+		errCh <- err
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	reqCancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error after context cancellation")
+		}
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Forward to return after cancellation")
+	}
+}
+
 func TestProxyRunBasic(t *testing.T) {
 	bus := events.NewBus()
 	cfg := config.ServerConfig{Command: "cat"}
@@ -152,5 +227,68 @@ func TestProxyRunBasic(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, `"jsonrpc":"2.0"`) {
 		t.Fatalf("expected JSON-RPC response, got: %s", output)
+	}
+}
+
+func TestProxyRunMalformedJSON(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{Command: "cat"}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer pool.Stop(ctx)
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	p := NewProxy(pool, logger, nil)
+
+	stdin := strings.NewReader(`not json` + "\n")
+	var stdout bytes.Buffer
+
+	err := p.Run(ctx, stdin, &stdout, "echo")
+	if err != nil && err != io.EOF {
+		t.Fatalf("run: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, `"error"`) {
+		t.Fatalf("expected error response, got: %s", output)
+	}
+}
+
+func TestProxyRunDefaultServerEmptyMultiple(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{Command: "cat"}
+	pool := server.NewPool(map[string]config.ServerConfig{
+		"srv1": cfg,
+		"srv2": cfg,
+	}, bus)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer pool.Stop(ctx)
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	p := NewProxy(pool, logger, nil)
+
+	stdin := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
+	var stdout bytes.Buffer
+
+	err := p.Run(ctx, stdin, &stdout, "")
+	if err != nil && err != io.EOF {
+		t.Fatalf("run: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, `"error"`) {
+		t.Fatalf("expected error response, got: %s", output)
 	}
 }

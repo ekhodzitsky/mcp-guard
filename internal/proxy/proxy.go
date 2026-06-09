@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -68,7 +67,8 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 
 	// Determine timeout.
 	timeout := 30 * time.Second
-	if strings.Contains(req.Method, "list") {
+	switch req.Method {
+	case mcp.MethodToolsList:
 		timeout = 10 * time.Second
 	}
 
@@ -123,39 +123,21 @@ func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSO
 		return zero, fmt.Errorf("write request: %w", err)
 	}
 
-	scanner := proc.Scanner()
-	if scanner == nil {
+	responses := proc.Responses()
+	if responses == nil {
 		return zero, mcp.ErrProcessDead
 	}
 
-	// Use a channel to read the response so we can respect context cancellation.
-	// Note: the goroutine below is not directly cancellable. Since we now use a
-	// single per-process scanner, it will exit when the process responds or dies.
-	type result struct {
-		resp mcp.JSONRPCResponse
-		err  error
-	}
-	resCh := make(chan result, 1)
-	go func() {
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				resCh <- result{err: fmt.Errorf("scan response: %w", err)}
-				return
-			}
-			resCh <- result{err: io.EOF}
-			return
+	select {
+	case line, ok := <-responses:
+		if !ok {
+			return zero, io.EOF
 		}
 		var resp mcp.JSONRPCResponse
-		if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
-			resCh <- result{err: fmt.Errorf("unmarshal response: %w", err)}
-			return
+		if err := json.Unmarshal(line, &resp); err != nil {
+			return zero, fmt.Errorf("unmarshal response: %w", err)
 		}
-		resCh <- result{resp: resp}
-	}()
-
-	select {
-	case res := <-resCh:
-		return res.resp, res.err
+		return resp, nil
 	case <-ctx.Done():
 		return zero, ctx.Err()
 	}
@@ -181,6 +163,9 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 		var req mcp.JSONRPCRequest
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 			slog.Error("unmarshal request", "error", err)
+			if werr := p.sendError(stdout, nil, -32700, "parse error"); werr != nil {
+				return werr
+			}
 			continue
 		}
 
@@ -192,6 +177,9 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 				serverName = names[0]
 			} else {
 				slog.Error("cannot determine target server", "method", req.Method)
+				if werr := p.sendError(stdout, req.ID, -32000, "cannot determine target server"); werr != nil {
+					return werr
+				}
 				continue
 			}
 		}
@@ -199,17 +187,8 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 		resp, err := p.Forward(ctx, serverName, req)
 		if err != nil {
 			slog.Error("forward request", "error", err, "server", serverName)
-			errResp := mcp.JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error: &mcp.JSONRPCError{
-					Code:    -32000,
-					Message: err.Error(),
-				},
-			}
-			b, _ := json.Marshal(errResp)
-			if _, werr := fmt.Fprintln(stdout, string(b)); werr != nil {
-				return fmt.Errorf("write error response: %w", werr)
+			if werr := p.sendError(stdout, req.ID, -32000, err.Error()); werr != nil {
+				return werr
 			}
 			continue
 		}
@@ -218,10 +197,33 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 		b, err := json.Marshal(resp)
 		if err != nil {
 			slog.Error("marshal response", "error", err)
+			if werr := p.sendError(stdout, req.ID, -32603, "internal error"); werr != nil {
+				return werr
+			}
 			continue
 		}
 		if _, werr := fmt.Fprintln(stdout, string(b)); werr != nil {
 			return fmt.Errorf("write response: %w", werr)
 		}
 	}
+}
+
+func (p *Proxy) sendError(stdout io.Writer, id any, code int, message string) error {
+	errResp := mcp.JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: &mcp.JSONRPCError{
+			Code:    code,
+			Message: message,
+		},
+	}
+	b, err := json.Marshal(errResp)
+	if err != nil {
+		slog.Error("marshal error response", "error", err)
+		b = []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"internal error"}}`)
+	}
+	if _, werr := fmt.Fprintln(stdout, string(b)); werr != nil {
+		return fmt.Errorf("write error response: %w", werr)
+	}
+	return nil
 }

@@ -17,15 +17,16 @@ import (
 
 // Process represents a single MCP server process.
 type Process struct {
-	name    string
-	cfg     config.ServerConfig
-	bus     *events.Bus
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  io.ReadCloser
-	scanner *bufio.Scanner
-	mu      sync.RWMutex
-	running bool
+	name      string
+	cfg       config.ServerConfig
+	bus       *events.Bus
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	scanner   *bufio.Scanner
+	responses chan []byte
+	mu        sync.RWMutex
+	running   bool
 }
 
 // NewProcess creates a new process handle.
@@ -78,6 +79,9 @@ func (p *Process) Start(ctx context.Context) error {
 	p.stdin = stdin
 	p.stdout = stdout
 	p.scanner = bufio.NewScanner(stdout)
+	p.scanner.Buffer(make([]byte, 4096), 10*1024*1024)
+	p.responses = make(chan []byte, 64)
+	go p.readLoop()
 	p.running = true
 
 	if p.bus != nil {
@@ -88,6 +92,28 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// readLoop reads lines from the scanner and pushes them to the responses channel.
+// It exits when the scanner returns EOF or error, closing the channel.
+func (p *Process) readLoop() {
+	scanner := p.scanner
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		p.mu.RLock()
+		ch := p.responses
+		p.mu.RUnlock()
+		if ch == nil {
+			return
+		}
+		ch <- line
+	}
+	p.mu.RLock()
+	ch := p.responses
+	p.mu.RUnlock()
+	if ch != nil {
+		close(ch)
+	}
 }
 
 // Stop gracefully stops the process.
@@ -162,6 +188,7 @@ func (p *Process) cleanupAfterStop(stdin io.WriteCloser, stdout io.ReadCloser) {
 	p.stdin = nil
 	p.stdout = nil
 	p.scanner = nil
+	p.responses = nil
 	p.mu.Unlock()
 }
 
@@ -191,6 +218,13 @@ func (p *Process) Scanner() *bufio.Scanner {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.scanner
+}
+
+// Responses returns the channel of response lines from the process.
+func (p *Process) Responses() <-chan []byte {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.responses
 }
 
 // Name returns the process name.
