@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -17,7 +18,7 @@ func WithTimeout[T any](ctx context.Context, timeout time.Duration, fn TimeoutFu
 	defer cancel()
 	result, err := fn(ctx)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return zero, fmt.Errorf("request timed out after %v: %w", timeout, err)
 		}
 		return zero, err
