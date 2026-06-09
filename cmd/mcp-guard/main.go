@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -41,6 +43,10 @@ func main() {
 }
 
 func run(cmd *cobra.Command, _ []string) error {
+	return runWithConfig(configPath)
+}
+
+func runWithConfig(configPath string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -57,6 +63,16 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	bus := events.NewBus()
 
+	// Setup signal handling before starting the pool to avoid races.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		<-sigCh
+		slog.Info("shutdown signal received")
+		cancel()
+	}()
+
 	pool := server.NewPool(cfg.Servers, bus)
 	if err := pool.Start(ctx); err != nil {
 		return fmt.Errorf("start pool: %w", err)
@@ -71,6 +87,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		}
 		sqlite, err := audit.NewSQLiteStore(cfg.Guard.AuditLogPath + ".db")
 		if err != nil {
+			_ = jsonl.Close()
 			return fmt.Errorf("audit sqlite: %w", err)
 		}
 		auditLogger = audit.NewMultiLogger(jsonl, sqlite)
@@ -85,30 +102,26 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	p := proxy.NewProxy(pool, auditLogger, maxCalls)
 
-	// Handle graceful shutdown.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-	go func() {
-		<-sigCh
-		slog.Info("shutdown signal received")
-		cancel()
-	}()
-
-	// Determine default server.
+	// Determine default server deterministically.
 	var defaultServer string
+	names := make([]string, 0, len(cfg.Servers))
 	for name := range cfg.Servers {
-		defaultServer = name
-		break
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) > 0 {
+		defaultServer = names[0]
 	}
 
 	if err := p.Run(ctx, os.Stdin, os.Stdout, defaultServer); err != nil {
-		if err == context.Canceled {
+		if errors.Is(err, context.Canceled) {
 			slog.Info("shutting down")
 		} else {
 			slog.Error("proxy run", "error", err)
 		}
 	}
+
+	signal.Stop(sigCh)
 
 	// Graceful shutdown of pool.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
