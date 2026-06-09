@@ -1,0 +1,163 @@
+// Package server manages MCP server processes.
+package server
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"sync"
+	"syscall"
+
+	"github.com/ekhodzitsky/mcp-guard/internal/config"
+	"github.com/ekhodzitsky/mcp-guard/internal/events"
+)
+
+// Process represents a single MCP server process.
+type Process struct {
+	name    string
+	cfg     config.ServerConfig
+	bus     *events.Bus
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  io.ReadCloser
+	mu      sync.RWMutex
+	running bool
+}
+
+// NewProcess creates a new process handle.
+func NewProcess(name string, cfg config.ServerConfig, bus *events.Bus) *Process {
+	return &Process{
+		name: name,
+		cfg:  cfg,
+		bus:  bus,
+	}
+}
+
+// Start launches the server process.
+func (p *Process) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.running {
+		return fmt.Errorf("process %q already running", p.name)
+	}
+
+	cmd := exec.CommandContext(ctx, p.cfg.Command, p.cfg.Args...)
+	cmd.Env = os.Environ()
+	for k, v := range p.cfg.Env {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
+	}
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start command: %w", err)
+	}
+
+	p.cmd = cmd
+	p.stdin = stdin
+	p.stdout = stdout
+	p.running = true
+
+	if p.bus != nil {
+		p.bus.Publish(ctx, events.Event{
+			Type:   "process.started",
+			Server: p.name,
+		})
+	}
+
+	return nil
+}
+
+// Stop gracefully stops the process.
+func (p *Process) Stop(ctx context.Context) error {
+	p.mu.Lock()
+	cmd := p.cmd
+	running := p.running
+	p.mu.Unlock()
+
+	if !running || cmd == nil {
+		return nil
+	}
+
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		<-done
+	}
+
+	p.mu.Lock()
+	p.running = false
+	p.cmd = nil
+	p.stdin = nil
+	p.stdout = nil
+	p.mu.Unlock()
+
+	if p.bus != nil {
+		p.bus.Publish(ctx, events.Event{
+			Type:   "process.stopped",
+			Server: p.name,
+		})
+	}
+
+	return nil
+}
+
+// Running reports whether the process is active.
+func (p *Process) Running() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.running
+}
+
+// Stdin returns the process stdin.
+func (p *Process) Stdin() io.WriteCloser {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.stdin
+}
+
+// Stdout returns the process stdout.
+func (p *Process) Stdout() io.ReadCloser {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.stdout
+}
+
+// Scanner returns a bufio.Scanner over the process stdout.
+func (p *Process) Scanner() *bufio.Scanner {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return bufio.NewScanner(p.stdout)
+}
+
+// Name returns the process name.
+func (p *Process) Name() string {
+	return p.name
+}
