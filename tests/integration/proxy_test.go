@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
+	"io"
 	"testing"
 	"time"
 
@@ -17,7 +17,8 @@ import (
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
 )
 
-func TestProxyWithCat(t *testing.T) {
+func setupProxyIntegration(t *testing.T) (*proxy.Proxy, *server.Pool, context.Context, context.CancelFunc) {
+	t.Helper()
 	bus := events.NewBus()
 	cfg := config.ServerConfig{
 		Command: "cat",
@@ -25,14 +26,20 @@ func TestProxyWithCat(t *testing.T) {
 	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	if err := pool.Start(ctx); err != nil {
+		cancel()
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
 
 	p := proxy.NewProxy(pool, &audit.NoopLogger{}, nil)
+	return p, pool, ctx, cancel
+}
+
+func TestProxyWithCat(t *testing.T) {
+	p, pool, ctx, cancel := setupProxyIntegration(t)
+	defer cancel()
+	defer pool.Stop(ctx)
 
 	req := mcp.JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -48,44 +55,49 @@ func TestProxyWithCat(t *testing.T) {
 	if resp.JSONRPC != "2.0" {
 		t.Fatalf("expected jsonrpc 2.0, got %s", resp.JSONRPC)
 	}
+	reqID, _ := req.ID.(int)
+	if resp.ID != float64(reqID) {
+		t.Fatalf("expected id %v, got %v", req.ID, resp.ID)
+	}
+	if resp.Error != nil {
+		t.Fatalf("expected no error, got %v", resp.Error)
+	}
 }
 
 func TestProxyRunLoop(t *testing.T) {
-	bus := events.NewBus()
-	cfg := config.ServerConfig{
-		Command: "cat",
-	}
-	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	p, pool, ctx, cancel := setupProxyIntegration(t)
 	defer cancel()
-
-	if err := pool.Start(ctx); err != nil {
-		t.Fatalf("pool start: %v", err)
-	}
 	defer pool.Stop(ctx)
-
-	p := proxy.NewProxy(pool, &audit.NoopLogger{}, nil)
 
 	req := mcp.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      42,
 		Method:  mcp.MethodPing,
 	}
-	reqBytes, _ := json.Marshal(req)
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
 	stdin := bytes.NewReader(append(reqBytes, '\n'))
-	var stdout bytes.Buffer
+	pr, pw := io.Pipe()
 
+	errCh := make(chan error, 1)
 	go func() {
-		time.Sleep(200 * time.Millisecond)
-		cancel()
+		errCh <- p.Run(ctx, stdin, pw, "echo")
+		_ = pw.Close()
 	}()
 
-	_ = p.Run(ctx, stdin, &stdout, "echo")
-
-	scanner := bufio.NewScanner(&stdout)
+	scanner := bufio.NewScanner(pr)
 	if !scanner.Scan() {
 		t.Fatal("expected response")
+	}
+	cancel()
+
+	runErr := <-errCh
+	// context.Canceled is expected because we explicitly cancel after reading
+	// the first response.
+	if runErr != nil && runErr != context.Canceled {
+		t.Fatalf("unexpected run error: %v", runErr)
 	}
 
 	var resp mcp.JSONRPCResponse
@@ -93,9 +105,7 @@ func TestProxyRunLoop(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	// cat echoes back what we sent; response may not be valid JSON-RPC
-	// but the proxy should have written something.
-	if resp.JSONRPC == "" && !strings.Contains(scanner.Text(), "jsonrpc") {
-		t.Fatalf("expected some JSON-RPC output, got: %s", scanner.Text())
+	if resp.JSONRPC != "2.0" {
+		t.Fatalf("expected jsonrpc 2.0, got %s", resp.JSONRPC)
 	}
 }
