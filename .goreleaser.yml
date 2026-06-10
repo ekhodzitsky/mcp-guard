@@ -5,15 +5,11 @@ builds:
     main: ./cmd/mcp-guard
     binary: mcp-guard
     env:
-      - CGO_ENABLED=1
-      - >-
-        {{- if eq .Os "linux" }}
-          {{- if eq .Arch "arm64" }}CC=aarch64-linux-gnu-gcc{{ end }}
-        {{- end }}
-    # Darwin builds require a macOS runner due to CGO and the macOS SDK.
-    # Extend this list later when a macOS builder is available.
+      - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -27,6 +23,9 @@ archives:
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
 
 checksum:
   name_template: 'checksums.txt'

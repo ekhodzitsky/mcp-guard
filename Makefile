@@ -16,7 +16,7 @@ lint:
 	golangci-lint run ./...
 
 build:
-	CGO_ENABLED=1 go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/mcp-guard
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/mcp-guard
 
 clean:
 	rm -f $(BINARY)
