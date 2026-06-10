@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,9 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 )
+
+// ErrInvalidConfig is returned when the configuration is invalid.
+var ErrInvalidConfig = errors.New("invalid configuration")
 
 // Config is the top-level configuration.
 type Config struct {

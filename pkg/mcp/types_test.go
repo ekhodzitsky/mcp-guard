@@ -295,3 +295,50 @@ func TestJSONRPCRoundtrip(t *testing.T) {
 		t.Fatalf("params = %s, want %s", got.Params, original.Params)
 	}
 }
+
+func TestRequestIDString(t *testing.T) {
+	tests := []struct {
+		name string
+		id   RequestID
+		want string
+	}{
+		{"nil", RequestID{Value: nil}, "null"},
+		{"int", RequestID{Value: 42}, "42"},
+		{"float64", RequestID{Value: float64(42)}, "42"},
+		{"string", RequestID{Value: "abc"}, "abc"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.id.String(); got != tt.want {
+				t.Fatalf("String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRequestIDEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a    RequestID
+		b    RequestID
+		want bool
+	}{
+		{"both nil", RequestID{Value: nil}, RequestID{Value: nil}, true},
+		{"a nil", RequestID{Value: nil}, RequestID{Value: 1}, false},
+		{"b nil", RequestID{Value: 1}, RequestID{Value: nil}, false},
+		{"same int", RequestID{Value: 1}, RequestID{Value: 1}, true},
+		{"int vs float64", RequestID{Value: 1}, RequestID{Value: float64(1)}, true},
+		{"same string", RequestID{Value: "abc"}, RequestID{Value: "abc"}, true},
+		{"different string", RequestID{Value: "abc"}, RequestID{Value: "def"}, false},
+		{"different numbers", RequestID{Value: 1}, RequestID{Value: 2}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.a.Equal(tt.b); got != tt.want {
+				t.Fatalf("Equal(%v, %v) = %v, want %v", tt.a.Value, tt.b.Value, got, tt.want)
+			}
+		})
+	}
+}

@@ -1,6 +1,6 @@
 package mcp
 
-import "errors"
+import "fmt"
 
 // JSONRPCVersion is the JSON-RPC protocol version.
 const JSONRPCVersion = "2.0"
@@ -17,9 +17,26 @@ const (
 	MethodCancelled        = "notifications/cancelled"
 )
 
-// Sentinel errors.
-var (
-	ErrTimeout       = errors.New("request timed out")
-	ErrProcessDead   = errors.New("server process is not running")
-	ErrInvalidConfig = errors.New("invalid configuration")
-)
+// RequestID represents a JSON-RPC request identifier.
+type RequestID struct {
+	Value any
+}
+
+// String returns the string representation of the request ID.
+func (r RequestID) String() string {
+	if r.Value == nil {
+		return "null"
+	}
+	return fmt.Sprint(r.Value)
+}
+
+// Equal reports whether two request IDs are equal.
+func (r RequestID) Equal(other RequestID) bool {
+	if r.Value == nil && other.Value == nil {
+		return true
+	}
+	if r.Value == nil || other.Value == nil {
+		return false
+	}
+	return r.String() == other.String()
+}

@@ -15,8 +15,12 @@ import (
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
+<<<<<<< Updated upstream
 	"go.opentelemetry.io/otel"
+=======
+>>>>>>> Stashed changes
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -66,12 +70,17 @@ func NewProxy(pool *server.Pool, logger audit.Logger, maxCalls map[string]int,
 	}
 }
 
-func extractToolName(params json.RawMessage) string {
+func extractToolName(params json.RawMessage) (string, error) {
 	var p struct {
 		Name string `json:"name"`
 	}
-	_ = json.Unmarshal(params, &p)
-	return p.Name
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", fmt.Errorf("invalid tool call params: %w", err)
+	}
+	if p.Name == "" {
+		return "", fmt.Errorf("tool name is required")
+	}
+	return p.Name, nil
 }
 
 // Forward sends a JSON-RPC request to the named server and returns the response.
@@ -102,15 +111,18 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 
 	// Permission and rate limit checks for tools/call.
 	if req.Method == mcp.MethodToolsCall {
-		toolName := extractToolName(req.Params)
+		toolName, err := extractToolName(req.Params)
+		if err != nil {
+			return zero, err
+		}
 
-		if checker := p.permissions[serverName]; checker != nil && toolName != "" {
+		if checker := p.permissions[serverName]; checker != nil {
 			if !checker.IsAllowed(toolName) {
 				return zero, fmt.Errorf("tool %q is not permitted: %w", toolName, config.ErrInvalidConfig)
 			}
 		}
 
-		if lim := p.rateLimiters[serverName]; lim != nil && toolName != "" {
+		if lim := p.rateLimiters[serverName]; lim != nil {
 			if !lim.Allow(toolName) {
 				return zero, fmt.Errorf("rate limit exceeded for tool %q: %w", toolName, ErrTimeout)
 			}
@@ -251,6 +263,14 @@ func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSO
 		return zero, fmt.Errorf("marshal request: %w", err)
 	}
 
+	// Notifications have no ID and do not expect a response.
+	if req.ID == nil {
+		if _, err := fmt.Fprintf(stdin, "%s\n", b); err != nil {
+			return zero, fmt.Errorf("write request: %w", err)
+		}
+		return zero, nil
+	}
+
 	// Register pending response.
 	idStr := mcp.RequestID{Value: req.ID}.String()
 	respCh := make(chan mcp.JSONRPCResponse, 1)
@@ -290,6 +310,7 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 	ctx, span := otel.Tracer("mcp-guard").Start(ctx, "proxy.Run")
 	defer span.End()
 	scanner := bufio.NewScanner(stdin)
+	scanner.Buffer(make([]byte, 4096), 10*1024*1024)
 	for {
 		select {
 		case <-ctx.Done():
@@ -334,6 +355,11 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 			if werr := p.sendError(stdout, req.ID, -32000, err.Error()); werr != nil {
 				return werr
 			}
+			continue
+		}
+
+		if req.ID == nil {
+			// Notification: no response expected.
 			continue
 		}
 

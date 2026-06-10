@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// ErrTimeout is returned when a request exceeds its deadline.
+var ErrTimeout = errors.New("request timed out")
+
 // TimeoutFunc is a function that can be wrapped with a timeout.
 type TimeoutFunc[T any] func(ctx context.Context) (T, error)
 
