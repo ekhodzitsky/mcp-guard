@@ -21,6 +21,7 @@ import (
 	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/proxy"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
+	"github.com/ekhodzitsky/mcp-guard/internal/telemetry"
 )
 
 var (
@@ -70,6 +71,12 @@ func runWithConfig(configPath string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	shutdown, err := telemetry.Init(ctx, "mcp-guard")
+	if err != nil {
+		return fmt.Errorf("init telemetry: %w", err)
+	}
+	defer func() { _ = shutdown(ctx) }()
 
 	bus := events.NewBus()
 
