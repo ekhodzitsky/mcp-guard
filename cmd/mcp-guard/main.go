@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ekhodzitsky/mcp-guard/internal/api"
 	"github.com/ekhodzitsky/mcp-guard/internal/audit"
 	"github.com/ekhodzitsky/mcp-guard/internal/cache"
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
@@ -89,17 +90,18 @@ func runWithConfig(configPath string) error {
 
 	// Setup audit logging.
 	var auditLogger audit.Logger
+	var sqliteStore *audit.SQLiteStore
 	if cfg.Guard.AuditLogPath != "" {
 		jsonl, err := audit.NewJSONLinesLogger(cfg.Guard.AuditLogPath + ".jsonl")
 		if err != nil {
 			return fmt.Errorf("audit jsonl: %w", err)
 		}
-		sqlite, err := audit.NewSQLiteStore(cfg.Guard.AuditLogPath + ".db")
+		sqliteStore, err = audit.NewSQLiteStore(cfg.Guard.AuditLogPath + ".db")
 		if err != nil {
 			_ = jsonl.Close()
 			return fmt.Errorf("audit sqlite: %w", err)
 		}
-		auditLogger = audit.NewMultiLogger(jsonl, sqlite)
+		auditLogger = audit.NewMultiLogger(jsonl, sqliteStore)
 	} else {
 		auditLogger = &audit.NoopLogger{}
 	}
@@ -125,6 +127,15 @@ func runWithConfig(configPath string) error {
 	}
 
 	p := proxy.NewProxy(pool, auditLogger, maxCalls, permissions, rateLimiters, schemaCache)
+
+	if cfg.API.Enabled {
+		apiServer := api.NewServer(cfg.API.Addr, pool, sqliteStore, bus)
+		go func() {
+			if err := apiServer.Run(ctx); err != nil {
+				slog.Error("api server", "error", err)
+			}
+		}()
+	}
 
 	// Determine default server deterministically.
 	var defaultServer string

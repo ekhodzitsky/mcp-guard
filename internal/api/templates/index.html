@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>mcp-guard</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { padding: 0.5rem; border: 1px solid #ccc; text-align: left; }
+    th { background: #f5f5f5; }
+    .badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
+    .ok { background: #d4edda; }
+    .fail { background: #f8d7da; }
+    .event { font-family: monospace; font-size: 0.85rem; padding: 0.25rem 0; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h1>mcp-guard</h1>
+  <h2>Servers</h2>
+  <div hx-get="/servers" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    Loading servers...
+  </div>
+  <h2>Live Events</h2>
+  <div hx-ext="sse" sse-connect="/events" sse-swap="message">
+    <div class="event">Waiting for events...</div>
+  </div>
+</body>
+</html>

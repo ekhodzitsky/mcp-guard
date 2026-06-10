@@ -60,6 +60,36 @@ func (s *SQLiteStore) Log(ctx context.Context, entry LogEntry) error {
 	return nil
 }
 
+// RecentEntry represents a recent audit log entry.
+type RecentEntry struct {
+	Timestamp string `json:"timestamp"`
+	Server    string `json:"server"`
+	Direction string `json:"direction"`
+	Message   string `json:"message"`
+}
+
+// Recent returns the most recent audit log entries.
+func (s *SQLiteStore) Recent(limit int) ([]RecentEntry, error) {
+	rows, err := s.db.Query(
+		"SELECT timestamp, server, direction, message FROM audit_log ORDER BY id DESC LIMIT ?",
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query audit log: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var entries []RecentEntry
+	for rows.Next() {
+		var e RecentEntry
+		if err := rows.Scan(&e.Timestamp, &e.Server, &e.Direction, &e.Message); err != nil {
+			return nil, fmt.Errorf("scan audit row: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
 // Close closes the database.
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()

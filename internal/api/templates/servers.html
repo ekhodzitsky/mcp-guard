@@ -1,0 +1,18 @@
+<table>
+  <tr><th>Server</th><th>Status</th><th>Actions</th></tr>
+  {{range .}}
+  <tr>
+    <td>{{.Name}}</td>
+    <td>
+      {{if .Running}}
+      <span class="badge ok">running</span>
+      {{else}}
+      <span class="badge fail">stopped</span>
+      {{end}}
+    </td>
+    <td>
+      <button hx-post="/servers/{{.Name}}/restart" hx-target="closest tr">Restart</button>
+    </td>
+  </tr>
+  {{end}}
+</table>
