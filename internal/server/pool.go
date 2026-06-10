@@ -50,7 +50,7 @@ func (p *Pool) Start(ctx context.Context) error {
 	p.cancel = cancel
 	p.mu.Unlock()
 
-	var started []string
+	started := make([]string, 0, len(p.processes))
 	for name, cfg := range p.config {
 		proc := NewProcess(name, cfg, p.bus)
 		if err := proc.Start(ctx); err != nil {
@@ -146,7 +146,7 @@ func (p *Pool) Stop(ctx context.Context) error {
 	wg.Wait()
 	close(errCh)
 
-	var errs []error
+	errs := make([]error, 0, len(processes))
 	for err := range errCh {
 		errs = append(errs, err)
 	}

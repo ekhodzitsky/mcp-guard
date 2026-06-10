@@ -26,11 +26,9 @@ type Proxy struct {
 // NewProxy creates a new proxy.
 func NewProxy(pool *server.Pool, logger audit.Logger, maxCalls map[string]int) *Proxy {
 	semaphores := make(map[string]chan struct{})
-	if maxCalls != nil {
-		for name, limit := range maxCalls {
-			if limit > 0 {
-				semaphores[name] = make(chan struct{}, limit)
-			}
+	for name, limit := range maxCalls {
+		if limit > 0 {
+			semaphores[name] = make(chan struct{}, limit)
 		}
 	}
 	return &Proxy{

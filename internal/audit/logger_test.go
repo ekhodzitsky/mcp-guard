@@ -93,11 +93,12 @@ func TestJSONLinesLogger(t *testing.T) {
 			}
 
 			// Read back and assert
+			// #nosec G304
 			f, err := os.Open(path)
 			if err != nil {
 				t.Fatalf("open file: %v", err)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			var readEntries []LogEntry
 			scanner := bufio.NewScanner(f)
@@ -217,7 +218,7 @@ func TestSQLiteStore(t *testing.T) {
 			if err != nil {
 				t.Fatalf("query: %v", err)
 			}
-			defer rows.Close()
+			defer func() { _ = rows.Close() }()
 
 			var readEntries []LogEntry
 			for rows.Next() {

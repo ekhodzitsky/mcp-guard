@@ -62,7 +62,7 @@ health_check_interval = "5s"
 max_concurrent_calls = 100
 audit_log_path = "~/mcp-guard-test-audit"
 `
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
 		t.Fatalf("write config file: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestLoadNonexistentFile(t *testing.T) {
 func TestLoadInvalidTOML(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte("not valid toml {{"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte("not valid toml {{"), 0600); err != nil {
 		t.Fatalf("write invalid config: %v", err)
 	}
 	_, err := Load(configPath)
@@ -152,7 +152,7 @@ func TestLoadEmptyCommand(t *testing.T) {
 [server.bad]
 command = ""
 `
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
 		t.Fatalf("write config file: %v", err)
 	}
 	_, err := Load(configPath)

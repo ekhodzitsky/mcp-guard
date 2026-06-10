@@ -12,7 +12,9 @@ import (
 )
 
 const (
-	EventHealthOK     = "health.ok"
+	// EventHealthOK is published when a health check succeeds.
+	EventHealthOK = "health.ok"
+	// EventHealthFailed is published when a health check fails.
 	EventHealthFailed = "health.failed"
 )
 

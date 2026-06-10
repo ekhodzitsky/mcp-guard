@@ -71,9 +71,7 @@ func (b *Bus) Publish(ctx context.Context, evt Event) {
 		wg.Add(1)
 		go func(c chan Event) {
 			defer func() {
-				if r := recover(); r != nil {
-					// channel was closed concurrently — safe to ignore
-				}
+				_ = recover()
 				wg.Done()
 			}()
 			select {

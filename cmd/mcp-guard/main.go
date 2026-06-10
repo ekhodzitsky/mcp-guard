@@ -100,7 +100,7 @@ func runWithConfig(configPath string) error {
 	} else {
 		auditLogger = &audit.NoopLogger{}
 	}
-	defer auditLogger.Close()
+	defer func() { _ = auditLogger.Close() }()
 
 	maxCalls := make(map[string]int)
 	for name := range cfg.Servers {

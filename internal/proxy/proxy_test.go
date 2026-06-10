@@ -30,7 +30,7 @@ func TestProxyForward(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
 	p := NewProxy(pool, logger, nil)
@@ -76,7 +76,7 @@ func TestProxyForwardNotRunning(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	// Stop the process directly without telling the pool.
 	proc := pool.Get("echo")
@@ -117,7 +117,7 @@ func TestProxyForwardTimeout(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
 	p := NewProxy(pool, logger, nil)
@@ -150,7 +150,7 @@ func TestProxyForwardConcurrent(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
 	p := NewProxy(pool, logger, nil)
@@ -185,7 +185,7 @@ func TestProxyForwardContextCancellation(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
 	p := NewProxy(pool, logger, nil)
@@ -231,7 +231,7 @@ func TestProxyRunBasic(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
 	p := NewProxy(pool, logger, nil)
@@ -264,7 +264,7 @@ func TestProxyRunMalformedJSON(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
 	p := NewProxy(pool, logger, nil)
@@ -300,7 +300,7 @@ func TestProxyRunDefaultServerEmptyMultiple(t *testing.T) {
 	if err := pool.Start(ctx); err != nil {
 		t.Fatalf("pool start: %v", err)
 	}
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
 	p := NewProxy(pool, logger, nil)

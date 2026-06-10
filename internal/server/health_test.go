@@ -16,7 +16,7 @@ func TestHealthChecker_FailuresZeroAfterSuccessfulPing(t *testing.T) {
 	if err := p.Start(context.Background()); err != nil {
 		t.Fatalf("start process: %v", err)
 	}
-	defer p.Stop(context.Background())
+	defer func() { _ = p.Stop(context.Background()) }()
 
 	checker := NewHealthChecker(p, bus, 50*time.Millisecond, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

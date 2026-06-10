@@ -23,7 +23,7 @@ type JSONRPCResponse struct {
 	// ID is the response identifier. When unmarshaled from JSON, numbers
 	// become float64 because encoding/json unmarshals numbers into float64
 	// when the target type is any.
-	ID     any           `json:"id,omitempty"`
+	ID     any             `json:"id,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *JSONRPCError   `json:"error,omitempty"`
 }

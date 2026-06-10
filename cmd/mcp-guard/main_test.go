@@ -31,7 +31,7 @@ func TestRunWithConfig_PoolStartFailure(t *testing.T) {
 [server.test]
 command = "this-command-definitely-does-not-exist-12345"
 `
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestRunWithConfig_AuditInitFailure(t *testing.T) {
 	auditPath := filepath.Join(tmpDir, "audit")
 
 	// Pre-create the .db as a directory so NewSQLiteStore fails.
-	if err := os.MkdirAll(auditPath+".db", 0755); err != nil {
+	if err := os.MkdirAll(auditPath+".db", 0750); err != nil {
 		t.Fatalf("create audit db directory: %v", err)
 	}
 
@@ -62,7 +62,7 @@ args = ["hello"]
 [guard]
 audit_log_path = "` + auditPath + `"
 `
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 

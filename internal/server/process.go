@@ -49,6 +49,7 @@ func (p *Process) Start(ctx context.Context) error {
 		return fmt.Errorf("process %q already running", p.name)
 	}
 
+	// #nosec G204
 	cmd := exec.CommandContext(ctx, p.cfg.Command, p.cfg.Args...)
 	cmd.Env = os.Environ()
 	for k, v := range p.cfg.Env {

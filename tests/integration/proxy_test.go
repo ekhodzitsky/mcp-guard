@@ -40,7 +40,7 @@ func setupProxyIntegration(t *testing.T) (*proxy.Proxy, *server.Pool, context.Co
 func TestProxyWithCat(t *testing.T) {
 	p, pool, ctx, cancel := setupProxyIntegration(t)
 	defer cancel()
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	req := mcp.JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -71,7 +71,7 @@ func TestProxyWithCat(t *testing.T) {
 func TestProxyRunLoop(t *testing.T) {
 	p, pool, ctx, cancel := setupProxyIntegration(t)
 	defer cancel()
-	defer pool.Stop(ctx)
+	defer func() { _ = pool.Stop(ctx) }()
 
 	req := mcp.JSONRPCRequest{
 		JSONRPC: "2.0",
