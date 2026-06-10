@@ -82,15 +82,18 @@ func runWithConfig(configPath string) error {
 	defer func() { _ = shutdown(ctx) }()
 
 	bus := events.NewBus()
+	defer bus.Close()
 
 	// Setup signal handling before starting the pool to avoid races.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
 	go func() {
-		<-sigCh
-		slog.Info("shutdown signal received")
-		cancel()
+		sig := <-sigCh
+		if sig != nil {
+			slog.Info("shutdown signal received", "signal", sig)
+			cancel()
+		}
 	}()
 
 	pool := server.NewPool(cfg.Servers, bus, cfg.Guard.HealthCheckInterval)
@@ -151,11 +154,19 @@ func runWithConfig(configPath string) error {
 
 	if httpAddr != "" {
 		httpTransport := api.NewHTTPTransport(p, defaultServer)
+		srv := &http.Server{Addr: httpAddr, Handler: httpTransport, ReadHeaderTimeout: 10 * time.Second}
 		go func() {
 			slog.Info("http transport listening", "addr", httpAddr)
-			srv := &http.Server{Addr: httpAddr, Handler: httpTransport, ReadHeaderTimeout: 10 * time.Second}
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("http transport", "error", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				slog.Error("http transport shutdown", "error", err)
 			}
 		}()
 	}
@@ -178,6 +189,7 @@ func runWithConfig(configPath string) error {
 	}
 
 	signal.Stop(sigCh)
+	close(sigCh)
 
 	// Graceful shutdown of pool.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
