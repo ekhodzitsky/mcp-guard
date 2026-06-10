@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"embed"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"time"
@@ -27,15 +28,25 @@ type Server struct {
 }
 
 type handlerSet struct {
-	pool       *server.Pool
-	auditStore *audit.SQLiteStore
-	bus        *events.Bus
+	pool        *server.Pool
+	auditStore  *audit.SQLiteStore
+	bus         *events.Bus
+	indexTmpl   *template.Template
+	serversTmpl *template.Template
 }
 
 // NewServer creates an HTTP API server.
 func NewServer(addr string, pool *server.Pool, auditStore *audit.SQLiteStore, bus *events.Bus) *Server {
 	s := &Server{addr: addr}
-	s.h = &handlerSet{pool: pool, auditStore: auditStore, bus: bus}
+	indexTmpl, err := template.ParseFS(templatesFS, "templates/index.html")
+	if err != nil {
+		slog.Error("failed to parse index template", "error", err)
+	}
+	serversTmpl, err := template.ParseFS(templatesFS, "templates/servers.html")
+	if err != nil {
+		slog.Error("failed to parse servers template", "error", err)
+	}
+	s.h = &handlerSet{pool: pool, auditStore: auditStore, bus: bus, indexTmpl: indexTmpl, serversTmpl: serversTmpl}
 	s.router = chi.NewRouter()
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)

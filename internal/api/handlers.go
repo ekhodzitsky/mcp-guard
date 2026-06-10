@@ -1,7 +1,6 @@
 package api
 
 import (
-	"html/template"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -13,15 +12,20 @@ type serverRow struct {
 }
 
 func (h *handlerSet) handleIndex(w http.ResponseWriter, r *http.Request) {
-	tmpl, err := template.ParseFS(templatesFS, "templates/index.html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if h.indexTmpl == nil {
+		http.Error(w, "template not loaded", http.StatusInternalServerError)
 		return
 	}
-	_ = tmpl.Execute(w, nil)
+	if err := h.indexTmpl.Execute(w, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (h *handlerSet) handleServers(w http.ResponseWriter, r *http.Request) {
+	if h.serversTmpl == nil {
+		http.Error(w, "template not loaded", http.StatusInternalServerError)
+		return
+	}
 	var rows []serverRow
 	for _, name := range h.pool.Names() {
 		proc := h.pool.Get(name)
@@ -29,13 +33,10 @@ func (h *handlerSet) handleServers(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, serverRow{Name: proc.Name(), Running: proc.Running()})
 		}
 	}
-	tmpl, err := template.ParseFS(templatesFS, "templates/servers.html")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	w.Header().Set("Content-Type", "text/html")
-	_ = tmpl.Execute(w, rows)
+	if err := h.serversTmpl.Execute(w, rows); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (h *handlerSet) handleRestart(w http.ResponseWriter, r *http.Request) {
