@@ -15,10 +15,6 @@ import (
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
-<<<<<<< Updated upstream
-	"go.opentelemetry.io/otel"
-=======
->>>>>>> Stashed changes
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
