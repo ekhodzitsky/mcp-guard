@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -156,18 +157,68 @@ func TestProxyForwardConcurrent(t *testing.T) {
 	p := NewProxy(pool, logger, nil)
 
 	var wg sync.WaitGroup
+	errCh := make(chan error, 5)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 			req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: id, Method: mcp.MethodPing}
-			_, err := p.Forward(ctx, "echo", req)
+			resp, err := p.Forward(ctx, "echo", req)
 			if err != nil {
-				t.Errorf("forward %d: %v", id, err)
+				errCh <- fmt.Errorf("forward %d: %w", id, err)
+				return
+			}
+			if fmt.Sprint(resp.ID) != fmt.Sprint(id) {
+				errCh <- fmt.Errorf("forward %d: got response with id %v, want %d", id, resp.ID, id)
 			}
 		}(i)
 	}
 	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Error(err)
+	}
+}
+
+func TestProxyForwardDuplicateID(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{
+		Command: "sleep",
+		Args:    []string{"100"},
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"slow": cfg}, bus, 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer func() { _ = pool.Stop(ctx) }()
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	p := NewProxy(pool, logger, nil)
+
+	req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 42, Method: mcp.MethodPing}
+
+	// Start first forward in background; it will block until timeout.
+	go func() {
+		_, _ = p.Forward(ctx, "slow", req)
+	}()
+
+	// Give the first request time to register as pending.
+	time.Sleep(50 * time.Millisecond)
+
+	// Second forward with same ID should fail immediately.
+	_, err := p.Forward(ctx, "slow", req)
+	if err == nil {
+		t.Fatal("expected error for duplicate request ID")
+	}
+	if !strings.Contains(err.Error(), "duplicate request ID") {
+		t.Fatalf("expected duplicate request ID error, got: %v", err)
+	}
 }
 
 func TestProxyForwardContextCancellation(t *testing.T) {

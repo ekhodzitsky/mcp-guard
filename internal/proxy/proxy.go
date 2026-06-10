@@ -15,12 +15,23 @@ import (
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
 )
 
+type pendingResp struct {
+	ch      chan mcp.JSONRPCResponse
+	created time.Time
+}
+
 // Proxy bridges client stdio with backend MCP server stdio.
 type Proxy struct {
 	pool       *server.Pool
 	logger     audit.Logger
 	semaphores map[string]chan struct{}
 	mu         sync.RWMutex
+
+	pending   map[string]pendingResp
+	pendingMu sync.Mutex
+
+	readers   map[*server.Process]struct{}
+	readersMu sync.Mutex
 }
 
 // NewProxy creates a new proxy.
@@ -35,6 +46,8 @@ func NewProxy(pool *server.Pool, logger audit.Logger, maxCalls map[string]int) *
 		pool:       pool,
 		logger:     logger,
 		semaphores: semaphores,
+		pending:    make(map[string]pendingResp),
+		readers:    make(map[*server.Process]struct{}),
 	}
 }
 
@@ -49,6 +62,8 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 	if !proc.Running() {
 		return zero, fmt.Errorf("server %q not running: %w", serverName, mcp.ErrProcessDead)
 	}
+
+	p.ensureReaderStarted(proc)
 
 	// Semaphore for max concurrent calls.
 	p.mu.RLock()
@@ -103,6 +118,51 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 	return resp, nil
 }
 
+func (p *Proxy) ensureReaderStarted(proc *server.Process) {
+	p.readersMu.Lock()
+	defer p.readersMu.Unlock()
+	if _, ok := p.readers[proc]; ok {
+		return
+	}
+	p.readers[proc] = struct{}{}
+	go p.readResponses(proc)
+}
+
+func (p *Proxy) readResponses(proc *server.Process) {
+	defer func() {
+		p.readersMu.Lock()
+		delete(p.readers, proc)
+		p.readersMu.Unlock()
+	}()
+
+	ch := proc.Responses()
+	if ch == nil {
+		return
+	}
+	for line := range ch {
+		var resp mcp.JSONRPCResponse
+		if err := json.Unmarshal(line, &resp); err != nil {
+			slog.Warn("unmarshal response", "error", err)
+			continue
+		}
+		idStr := fmt.Sprint(resp.ID)
+		p.pendingMu.Lock()
+		pr, ok := p.pending[idStr]
+		if ok {
+			delete(p.pending, idStr)
+		}
+		p.pendingMu.Unlock()
+		if ok {
+			select {
+			case pr.ch <- resp:
+			default:
+			}
+		} else {
+			slog.Warn("orphan response", "id", resp.ID)
+		}
+	}
+}
+
 func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSONRPCRequest) (mcp.JSONRPCResponse, error) {
 	var zero mcp.JSONRPCResponse
 
@@ -116,23 +176,33 @@ func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSO
 		return zero, fmt.Errorf("marshal request: %w", err)
 	}
 
+	// Register pending response.
+	idStr := fmt.Sprint(req.ID)
+	respCh := make(chan mcp.JSONRPCResponse, 1)
+
+	p.pendingMu.Lock()
+	if _, exists := p.pending[idStr]; exists {
+		p.pendingMu.Unlock()
+		return zero, fmt.Errorf("duplicate request ID %v", req.ID)
+	}
+	p.pending[idStr] = pendingResp{ch: respCh, created: time.Now()}
+	p.pendingMu.Unlock()
+
+	// Unregister on exit.
+	defer func() {
+		p.pendingMu.Lock()
+		delete(p.pending, idStr)
+		p.pendingMu.Unlock()
+	}()
+
 	if _, err := fmt.Fprintf(stdin, "%s\n", b); err != nil {
 		return zero, fmt.Errorf("write request: %w", err)
 	}
 
-	responses := proc.Responses()
-	if responses == nil {
-		return zero, mcp.ErrProcessDead
-	}
-
 	select {
-	case line, ok := <-responses:
+	case resp, ok := <-respCh:
 		if !ok {
 			return zero, io.EOF
-		}
-		var resp mcp.JSONRPCResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
-			return zero, fmt.Errorf("unmarshal response: %w", err)
 		}
 		return resp, nil
 	case <-ctx.Done():
@@ -190,7 +260,6 @@ func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defa
 			continue
 		}
 
-		resp.ID = req.ID
 		b, err := json.Marshal(resp)
 		if err != nil {
 			slog.Error("marshal response", "error", err)
