@@ -99,8 +99,9 @@ func TestProxyRunLoop(t *testing.T) {
 
 	runErr := <-errCh
 	// context.Canceled is expected because we explicitly cancel after reading
-	// the first response.
-	if runErr != nil && runErr != context.Canceled {
+	// the first response. io.EOF is also valid when stdin reaches end-of-file
+	// before the cancellation is observed.
+	if runErr != nil && runErr != context.Canceled && runErr != io.EOF {
 		t.Fatalf("unexpected run error: %v", runErr)
 	}
 
