@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
@@ -26,6 +27,7 @@ import (
 
 var (
 	configPath string
+	httpAddr   string
 	rootCmd    *cobra.Command
 
 	version = "dev"
@@ -43,6 +45,7 @@ func init() {
 	}
 	rootCmd.SetVersionTemplate("mcp-guard version {{.Version}} (commit: " + commit + ", built: " + date + ")\n")
 	rootCmd.Flags().StringVarP(&configPath, "config", "c", "mcp-guard.toml", "path to config file")
+	rootCmd.Flags().StringVar(&httpAddr, "http-addr", "", "HTTP listen address (e.g., :8080)")
 }
 
 func main() {
@@ -135,15 +138,6 @@ func runWithConfig(configPath string) error {
 
 	p := proxy.NewProxy(pool, auditLogger, maxCalls, permissions, rateLimiters, schemaCache)
 
-	if cfg.API.Enabled {
-		apiServer := api.NewServer(cfg.API.Addr, pool, sqliteStore, bus)
-		go func() {
-			if err := apiServer.Run(ctx); err != nil {
-				slog.Error("api server", "error", err)
-			}
-		}()
-	}
-
 	// Determine default server deterministically.
 	var defaultServer string
 	names := make([]string, 0, len(cfg.Servers))
@@ -153,6 +147,26 @@ func runWithConfig(configPath string) error {
 	sort.Strings(names)
 	if len(names) > 0 {
 		defaultServer = names[0]
+	}
+
+	if httpAddr != "" {
+		httpTransport := api.NewHTTPTransport(p, defaultServer)
+		go func() {
+			slog.Info("http transport listening", "addr", httpAddr)
+			srv := &http.Server{Addr: httpAddr, Handler: httpTransport, ReadHeaderTimeout: 10 * time.Second}
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("http transport", "error", err)
+			}
+		}()
+	}
+
+	if cfg.API.Enabled {
+		apiServer := api.NewServer(cfg.API.Addr, pool, sqliteStore, bus)
+		go func() {
+			if err := apiServer.Run(ctx); err != nil {
+				slog.Error("api server", "error", err)
+			}
+		}()
 	}
 
 	if err := p.Run(ctx, os.Stdin, os.Stdout, defaultServer); err != nil {
