@@ -24,6 +24,12 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		return nil, fmt.Errorf("set wal mode: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
 	schema := `
 	CREATE TABLE IF NOT EXISTS audit_log (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,8 +75,8 @@ type RecentEntry struct {
 }
 
 // Recent returns the most recent audit log entries.
-func (s *SQLiteStore) Recent(limit int) ([]RecentEntry, error) {
-	rows, err := s.db.Query(
+func (s *SQLiteStore) Recent(ctx context.Context, limit int) ([]RecentEntry, error) {
+	rows, err := s.db.QueryContext(ctx,
 		"SELECT timestamp, server, direction, message FROM audit_log ORDER BY id DESC LIMIT ?",
 		limit,
 	)
