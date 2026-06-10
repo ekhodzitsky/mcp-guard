@@ -131,7 +131,7 @@ func TestHealthChecker_OKNotPublishedOnEverySuccess(t *testing.T) {
 	checker.Stop()
 
 	var okCount int
-	drain:
+drain:
 	for {
 		select {
 		case evt := <-sub:
@@ -185,7 +185,7 @@ func TestHealthChecker_OKPublishedOnRecovery(t *testing.T) {
 	defer func() { _ = p2.Stop(context.Background()) }()
 
 	// Drain all stale events (process.stopped, process.started, health.failed).
-	drain:
+drain:
 	for {
 		select {
 		case <-sub:
