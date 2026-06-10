@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/events"
@@ -66,9 +65,7 @@ func (p *Process) Start(ctx context.Context) error {
 	for k, v := range p.cfg.Env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	setProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -157,9 +154,7 @@ func (p *Process) Stop(ctx context.Context) error {
 		return nil
 	}
 
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
+	_ = terminateProcess(cmd)
 
 	done := make(chan error, 1)
 	go func() {
@@ -178,16 +173,12 @@ func (p *Process) Stop(ctx context.Context) error {
 		}
 
 		// Intentional signal termination is not an error.
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-				return nil
-			}
+		if exitErr, ok := err.(*exec.ExitError); ok && isSignaledExit(exitErr) {
+			return nil
 		}
 		return err
 	case <-ctx.Done():
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
+		_ = killProcess(cmd)
 		<-done
 
 		p.cleanupAfterStop(stdin, stdout)
