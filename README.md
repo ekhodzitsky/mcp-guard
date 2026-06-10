@@ -21,15 +21,29 @@ go install github.com/ekhodzitsky/mcp-guard/cmd/mcp-guard@latest
 Create a `mcp-guard.toml`:
 
 ```toml
+[server.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+timeout = { tools_call = "30s", tools_list = "10s" }
+restart = { max_attempts = 5, backoff = "exponential" }
+permissions = { allow = ["read_file", "list_directory"], deny = ["write_file", "delete_file"] }
+rate_limit = { rpm = 60, rpd = 1000 }
+
 [server.echo]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-echo"]
+timeout = { tools_call = "30s", tools_list = "10s" }
 restart = { max_attempts = 5, backoff = "exponential" }
 
 [guard]
 health_check_interval = "5s"
 audit_log_path = "~/.mcp-guard/audit"
+schema_cache_ttl = "5m"
 max_concurrent_calls = 100
+
+[api]
+enabled = true
+addr = "localhost:8787"
 ```
 
 Run:
@@ -47,6 +61,13 @@ Client stdout ← mcp-guard proxy ← Server stdout
               [Audit Log]
               [Timeout Check]
 ```
+
+## v2 Features
+
+- **Schema Cache**: `tools/list` responses are cached with TTL and invalidated on `list_changed` notifications.
+- **Rate Limiting**: Per-tool RPM/RPD limits prevent abuse.
+- **Tool Permissions**: Whitelist/blacklist tools per server.
+- **Web UI (HTMX)**: View server status, live audit log, and trigger manual restarts at `http://localhost:8787`.
 
 ## Development
 
