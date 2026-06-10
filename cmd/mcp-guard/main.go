@@ -23,15 +23,21 @@ import (
 var (
 	configPath string
 	rootCmd    *cobra.Command
+
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func init() {
 	rootCmd = &cobra.Command{
-		Use:   "mcp-guard",
-		Short: "MCP Process Manager & Proxy",
-		Long:  "mcp-guard manages MCP server processes, enforces timeouts, and logs all JSON-RPC traffic.",
-		RunE:  run,
+		Use:     "mcp-guard",
+		Short:   "MCP Process Manager & Proxy",
+		Long:    "mcp-guard manages MCP server processes, enforces timeouts, and logs all JSON-RPC traffic.",
+		RunE:    run,
+		Version: version,
 	}
+	rootCmd.SetVersionTemplate("mcp-guard version {{.Version}} (commit: " + commit + ", built: " + date + ")\n")
 	rootCmd.Flags().StringVarP(&configPath, "config", "c", "mcp-guard.toml", "path to config file")
 }
 
