@@ -14,7 +14,9 @@ import (
 	"github.com/ekhodzitsky/mcp-guard/internal/cache"
 	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
+	"github.com/ekhodzitsky/mcp-guard/internal/telemetry"
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type pendingResp struct {
@@ -73,6 +75,12 @@ func extractToolName(params json.RawMessage) string {
 
 // Forward sends a JSON-RPC request to the named server and returns the response.
 func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCRequest) (mcp.JSONRPCResponse, error) {
+	ctx, span := telemetry.Tracer.Start(ctx, "proxy.Forward")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("server", serverName),
+		attribute.String("method", req.Method),
+	)
 	var zero mcp.JSONRPCResponse
 
 	// Schema cache for tools/list.
@@ -227,6 +235,9 @@ func (p *Proxy) readResponses(proc *server.Process) {
 }
 
 func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSONRPCRequest) (mcp.JSONRPCResponse, error) {
+	ctx, span := telemetry.Tracer.Start(ctx, "proxy.doForward")
+	defer span.End()
+	span.SetAttributes(attribute.String("process", proc.Name()))
 	var zero mcp.JSONRPCResponse
 
 	stdin := proc.Stdin()
@@ -275,6 +286,8 @@ func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSO
 
 // Run starts a blocking loop that reads JSON-RPC requests from stdin and writes responses to stdout.
 func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defaultServer string) error {
+	ctx, span := telemetry.Tracer.Start(ctx, "proxy.Run")
+	defer span.End()
 	scanner := bufio.NewScanner(stdin)
 	for {
 		select {

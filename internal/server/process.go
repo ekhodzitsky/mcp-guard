@@ -13,6 +13,8 @@ import (
 
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/events"
+	"github.com/ekhodzitsky/mcp-guard/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Process represents a single MCP server process.
@@ -42,6 +44,9 @@ func NewProcess(name string, cfg config.ServerConfig, bus *events.Bus) *Process 
 // The provided ctx must remain valid for the lifetime of the process;
 // cancelling it prematurely will kill the process.
 func (p *Process) Start(ctx context.Context) error {
+	ctx, span := telemetry.Tracer.Start(ctx, "process.Start")
+	defer span.End()
+	span.SetAttributes(attribute.String("process", p.name))
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -124,6 +129,9 @@ func (p *Process) readLoop() {
 
 // Stop gracefully stops the process.
 func (p *Process) Stop(ctx context.Context) error {
+	ctx, span := telemetry.Tracer.Start(ctx, "process.Stop")
+	defer span.End()
+	span.SetAttributes(attribute.String("process", p.name))
 	p.mu.Lock()
 	cmd := p.cmd
 	running := p.running

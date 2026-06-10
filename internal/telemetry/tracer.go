@@ -10,11 +10,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // Tracer is the application tracer.
-var Tracer trace.Tracer
+var Tracer = otel.Tracer("mcp-guard")
 
 // Init initializes the global tracer with a stdout exporter.
 func Init(ctx context.Context, serviceName string) (func(context.Context) error, error) {
