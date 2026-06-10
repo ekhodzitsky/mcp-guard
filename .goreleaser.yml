@@ -6,6 +6,10 @@ builds:
     binary: mcp-guard
     env:
       - CGO_ENABLED=1
+      - >-
+        {{- if eq .Os "linux" }}
+          {{- if eq .Arch "arm64" }}CC=aarch64-linux-gnu-gcc{{ end }}
+        {{- end }}
     # Darwin builds require a macOS runner due to CGO and the macOS SDK.
     # Extend this list later when a macOS builder is available.
     goos:
