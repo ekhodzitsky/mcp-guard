@@ -12,9 +12,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
-// Tracer is the application tracer.
-var Tracer = otel.Tracer("mcp-guard")
-
 // Init initializes the global tracer with a stdout exporter.
 func Init(ctx context.Context, serviceName string) (func(context.Context) error, error) {
 	exp, err := stdouttrace.New(stdouttrace.WithWriter(os.Stderr))
@@ -31,7 +28,6 @@ func Init(ctx context.Context, serviceName string) (func(context.Context) error,
 	)
 
 	otel.SetTracerProvider(provider)
-	Tracer = provider.Tracer(serviceName)
 
 	return provider.Shutdown, nil
 }

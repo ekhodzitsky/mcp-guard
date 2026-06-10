@@ -8,7 +8,7 @@ import (
 
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/events"
-	"github.com/ekhodzitsky/mcp-guard/internal/telemetry"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -184,7 +184,7 @@ func (p *Pool) Names() []string {
 
 // Restart restarts a single server with exponential backoff.
 func (p *Pool) Restart(ctx context.Context, name string) error {
-	ctx, span := telemetry.Tracer.Start(ctx, "pool.Restart")
+	ctx, span := otel.Tracer("mcp-guard").Start(ctx, "pool.Restart")
 	defer span.End()
 	span.SetAttributes(attribute.String("server", name))
 	p.restartMu.Lock()

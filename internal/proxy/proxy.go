@@ -12,9 +12,10 @@ import (
 
 	"github.com/ekhodzitsky/mcp-guard/internal/audit"
 	"github.com/ekhodzitsky/mcp-guard/internal/cache"
+	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
-	"github.com/ekhodzitsky/mcp-guard/internal/telemetry"
+	"go.opentelemetry.io/otel"
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -75,7 +76,7 @@ func extractToolName(params json.RawMessage) string {
 
 // Forward sends a JSON-RPC request to the named server and returns the response.
 func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCRequest) (mcp.JSONRPCResponse, error) {
-	ctx, span := telemetry.Tracer.Start(ctx, "proxy.Forward")
+	ctx, span := otel.Tracer("mcp-guard").Start(ctx, "proxy.Forward")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("server", serverName),
@@ -105,23 +106,23 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 
 		if checker := p.permissions[serverName]; checker != nil && toolName != "" {
 			if !checker.IsAllowed(toolName) {
-				return zero, fmt.Errorf("tool %q is not permitted: %w", toolName, mcp.ErrInvalidConfig)
+				return zero, fmt.Errorf("tool %q is not permitted: %w", toolName, config.ErrInvalidConfig)
 			}
 		}
 
 		if lim := p.rateLimiters[serverName]; lim != nil && toolName != "" {
 			if !lim.Allow(toolName) {
-				return zero, fmt.Errorf("rate limit exceeded for tool %q: %w", toolName, mcp.ErrTimeout)
+				return zero, fmt.Errorf("rate limit exceeded for tool %q: %w", toolName, ErrTimeout)
 			}
 		}
 	}
 
 	proc := p.pool.Get(serverName)
 	if proc == nil {
-		return zero, fmt.Errorf("unknown server %q: %w", serverName, mcp.ErrProcessDead)
+		return zero, fmt.Errorf("unknown server %q: %w", serverName, server.ErrProcessDead)
 	}
 	if !proc.Running() {
-		return zero, fmt.Errorf("server %q not running: %w", serverName, mcp.ErrProcessDead)
+		return zero, fmt.Errorf("server %q not running: %w", serverName, server.ErrProcessDead)
 	}
 
 	p.ensureReaderStarted(proc)
@@ -216,7 +217,7 @@ func (p *Proxy) readResponses(proc *server.Process) {
 			slog.Warn("unmarshal response", "error", err)
 			continue
 		}
-		idStr := fmt.Sprint(resp.ID)
+		idStr := mcp.RequestID{Value: resp.ID}.String()
 		p.pendingMu.Lock()
 		pr, ok := p.pending[idStr]
 		if ok {
@@ -235,14 +236,14 @@ func (p *Proxy) readResponses(proc *server.Process) {
 }
 
 func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSONRPCRequest) (mcp.JSONRPCResponse, error) {
-	ctx, span := telemetry.Tracer.Start(ctx, "proxy.doForward")
+	ctx, span := otel.Tracer("mcp-guard").Start(ctx, "proxy.doForward")
 	defer span.End()
 	span.SetAttributes(attribute.String("process", proc.Name()))
 	var zero mcp.JSONRPCResponse
 
 	stdin := proc.Stdin()
 	if stdin == nil {
-		return zero, mcp.ErrProcessDead
+		return zero, server.ErrProcessDead
 	}
 
 	b, err := json.Marshal(req)
@@ -251,7 +252,7 @@ func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSO
 	}
 
 	// Register pending response.
-	idStr := fmt.Sprint(req.ID)
+	idStr := mcp.RequestID{Value: req.ID}.String()
 	respCh := make(chan mcp.JSONRPCResponse, 1)
 
 	p.pendingMu.Lock()
@@ -286,7 +287,7 @@ func (p *Proxy) doForward(ctx context.Context, proc *server.Process, req mcp.JSO
 
 // Run starts a blocking loop that reads JSON-RPC requests from stdin and writes responses to stdout.
 func (p *Proxy) Run(ctx context.Context, stdin io.Reader, stdout io.Writer, defaultServer string) error {
-	ctx, span := telemetry.Tracer.Start(ctx, "proxy.Run")
+	ctx, span := otel.Tracer("mcp-guard").Start(ctx, "proxy.Run")
 	defer span.End()
 	scanner := bufio.NewScanner(stdin)
 	for {
