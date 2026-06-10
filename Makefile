@@ -1,5 +1,6 @@
 BINARY := mcp-guard
-LDFLAGS := -s -w
+VERSION ?= dev
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 .PHONY: all test lint build clean race
 

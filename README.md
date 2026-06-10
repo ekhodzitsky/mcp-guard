@@ -1,24 +1,59 @@
-# mcp-guard
+# MCP Guard 🛡️
 
-MCP Process Manager & Proxy — production-ready guardian for MCP servers.
+[![Go Version](https://img.shields.io/badge/go-1.26+-00ADD8?logo=go)](https://go.dev)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen)](Makefile)
+[![MCP](https://img.shields.io/badge/MCP-Protocol-orange)](https://modelcontextprotocol.io)
+
+> **Production-ready guardian for MCP servers.**
+>
+> Process management, hard timeouts, audit logging, rate limiting, and tool permissions — all in one lightweight stdio proxy.
+
+---
+
+## Why MCP Guard?
+
+Running MCP servers in production is fragile:
+
+- **Processes crash** and never come back.
+- **Tool calls hang forever** with no way to cancel them.
+- **Any tool can be invoked** with no access control.
+- **No audit trail** of what the AI actually did.
+- **Schema requests flood** the server on every context window.
+
+**MCP Guard fixes all of that.** It sits between your AI client and MCP servers, adding reliability, security, and observability without changing a single line of server code.
+
+---
 
 ## Features
 
-- **Process Pool Management**: Start, monitor, and gracefully restart MCP servers
-- **Health Checks**: Health checks write a ping every 5s; auto-restart triggers after 3 consecutive failed health checks (~15s of unresponsiveness).
-- **Hard Timeouts**: 30s for tools/call, 10s for tools/list
-- **Audit Logging**: JSON Lines + SQLite for all JSON-RPC traffic
-- **Graceful Shutdown**: SIGTERM → child SIGTERM → SIGKILL after 10s
+| Feature | Description |
+|---------|-------------|
+| 🖥️ **Process Pool** | Start, monitor, and auto-restart multiple MCP servers |
+| 💓 **Health Checks** | Ping every 5s; auto-restart after 3 consecutive failures (~15s) |
+| ⏱️ **Hard Timeouts** | 30s for `tools/call`, 10s for `tools/list` — no more hangs |
+| 📝 **Audit Logging** | JSON Lines + SQLite dual logging of all JSON-RPC traffic |
+| 🔒 **Tool Permissions** | Whitelist / blacklist tools per server (deny takes precedence) |
+| 🚦 **Rate Limiting** | Per-tool RPM/RPD sliding-window limits |
+| ⚡ **Schema Cache** | `tools/list` responses cached with TTL; auto-invalidated on `list_changed` |
+| 🌐 **Web UI** | HTMX-based dashboard + SSE live events at `localhost:8787` |
+| 📊 **OpenTelemetry** | Distributed tracing out of the box |
 
-## Installation
+---
+
+## Quick Start
+
+### Install
 
 ```bash
 go install github.com/ekhodzitsky/mcp-guard/cmd/mcp-guard@latest
 ```
 
-## Usage
+Or download a pre-built binary from [Releases](https://github.com/ekhodzitsky/mcp-guard/releases).
 
-Create a `mcp-guard.toml`:
+### Configure
+
+Create `mcp-guard.toml`:
 
 ```toml
 [server.filesystem]
@@ -26,14 +61,12 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 timeout = { tools_call = "30s", tools_list = "10s" }
 restart = { max_attempts = 5, backoff = "exponential" }
-permissions = { allow = ["read_file", "list_directory"], deny = ["write_file", "delete_file"] }
+permissions = { allow = ["read_file", "list_directory"], deny = ["write_file"] }
 rate_limit = { rpm = 60, rpd = 1000 }
 
 [server.echo]
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-echo"]
-timeout = { tools_call = "30s", tools_list = "10s" }
-restart = { max_attempts = 5, backoff = "exponential" }
 
 [guard]
 health_check_interval = "5s"
@@ -46,37 +79,81 @@ enabled = true
 addr = "localhost:8787"
 ```
 
-Run:
+### Run
 
 ```bash
 mcp-guard -c mcp-guard.toml
 ```
 
+Then point your MCP client (Claude Desktop, Cline, etc.) at `mcp-guard` instead of the raw server command.
+
+---
+
 ## Architecture
 
 ```
-Client stdin → mcp-guard proxy → Server stdin
-Client stdout ← mcp-guard proxy ← Server stdout
+┌─────────────┐      stdin       ┌─────────────┐      stdin       ┌─────────────┐
+│   MCP       │ ───────────────→ │  MCP Guard  │ ───────────────→ │   MCP       │
+│   Client    │                  │   Proxy     │                  │   Server    │
+│ (Claude,    │ ←─────────────── │  + Guard    │ ←─────────────── │  (Pool)     │
+│  Cline…)    │     stdout       │             │     stdout       │             │
+└─────────────┘                  └──────┬──────┘                  └─────────────┘
+                                        │
+                    ┌───────────────────┼───────────────────┐
+                    ↓                   ↓                   ↓
+              [Audit Log]      [Timeout Check]      [Permission / Rate Limit]
                     ↓
-              [Audit Log]
-              [Timeout Check]
+              [Schema Cache]
+                    ↓
+              [Web UI / API]
 ```
 
-## v2 Features
+---
 
-- **Schema Cache**: `tools/list` responses are cached with TTL and invalidated on `list_changed` notifications.
-- **Rate Limiting**: Per-tool RPM/RPD limits prevent abuse.
-- **Tool Permissions**: Whitelist/blacklist tools per server.
-- **Web UI (HTMX)**: View server status, live audit log, and trigger manual restarts at `http://localhost:8787`.
+## Configuration Reference
+
+| Section | Key | Default | Description |
+|---------|-----|---------|-------------|
+| `server.<name>` | `command` | — | Executable to run |
+| `server.<name>` | `args` | `[]` | Arguments |
+| `server.<name>` | `env` | `{}` | Extra environment variables |
+| `server.<name>` | `timeout` | — | `tools_call`, `tools_list` durations |
+| `server.<name>` | `restart` | — | `max_attempts`, `backoff` |
+| `server.<name>` | `permissions` | — | `allow`, `deny` tool lists |
+| `server.<name>` | `rate_limit` | — | `rpm`, `rpd` |
+| `guard` | `health_check_interval` | `5s` | Health ping frequency |
+| `guard` | `audit_log_path` | `""` | Path prefix for `.jsonl` + `.db` |
+| `guard` | `schema_cache_ttl` | `0` | Cache TTL (disabled if 0) |
+| `guard` | `max_concurrent_calls` | `100` | Semaphore per server |
+| `api` | `enabled` | `false` | Enable HTTP dashboard |
+| `api` | `addr` | `:8787` | Bind address |
+
+---
+
+## Roadmap
+
+- [x] Process pool & health checks
+- [x] Hard timeouts & audit logging
+- [x] Tool permissions & rate limiting
+- [x] Schema cache & Web UI
+- [ ] mTLS / auth for HTTP API
+- [ ] Prometheus metrics endpoint
+- [ ] Plugin system for custom guards
+
+---
 
 ## Development
 
-Requires Go 1.23+.
+Requires Go 1.26+.
 
 ```bash
-make test   # Run tests
-make race   # Run tests with race detector
-make lint   # Run golangci-lint
-make build  # Build binary
-make clean  # Remove binary
+make race   # tests with race detector
+make lint   # golangci-lint
+make build  # build binary
 ```
+
+---
+
+## License
+
+MIT © [Eugene Khodzitsky](https://github.com/ekhodzitsky)
