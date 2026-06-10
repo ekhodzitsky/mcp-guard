@@ -3,6 +3,7 @@ package events
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 )
 
@@ -71,12 +72,18 @@ func (b *Bus) Publish(ctx context.Context, evt Event) {
 		wg.Add(1)
 		go func(c chan Event) {
 			defer func() {
-				_ = recover()
+				if r := recover(); r != nil {
+					if err, ok := r.(error); !ok || err.Error() != "send on closed channel" {
+						slog.Error("events: unexpected panic in Publish", "error", r)
+						panic(r)
+					}
+				}
 				wg.Done()
 			}()
 			select {
 			case c <- evt:
 			case <-ctx.Done():
+			default:
 			}
 		}(ch)
 	}
