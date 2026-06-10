@@ -21,6 +21,7 @@ type Pool struct {
 	started        bool
 	cancel         context.CancelFunc
 	restartMu      sync.Mutex
+	restarterWg    sync.WaitGroup
 }
 
 // NewPool creates a new process pool.
@@ -68,7 +69,11 @@ func (p *Pool) Start(ctx context.Context) error {
 		started = append(started, name)
 
 		if p.bus != nil {
-			go p.serverRestarter(startCtx, name)
+			p.restarterWg.Add(1)
+			go func(serverName string) {
+				defer p.restarterWg.Done()
+				p.serverRestarter(startCtx, serverName)
+			}(name)
 		}
 	}
 
@@ -131,6 +136,7 @@ func (p *Pool) Stop(ctx context.Context) error {
 	for _, c := range checkers {
 		c.Stop()
 	}
+	p.restarterWg.Wait()
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(processes))
