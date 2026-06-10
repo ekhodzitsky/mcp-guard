@@ -20,16 +20,17 @@ const (
 
 // HealthChecker pings a process periodically and reports health.
 type HealthChecker struct {
-	process     *Process
-	bus         *events.Bus
-	interval    time.Duration
-	maxFailures int
-	mu          sync.Mutex
-	failures    int
-	stopCh      chan struct{}
-	stopOnce    sync.Once
-	wg          sync.WaitGroup
-	started     bool
+	process      *Process
+	bus          *events.Bus
+	interval     time.Duration
+	checkTimeout time.Duration
+	maxFailures  int
+	mu           sync.Mutex
+	failures     int
+	stopCh       chan struct{}
+	stopOnce     sync.Once
+	wg           sync.WaitGroup
+	started      bool
 }
 
 // NewHealthChecker creates a health checker.
@@ -44,11 +45,12 @@ func NewHealthChecker(p *Process, bus *events.Bus, interval time.Duration, maxFa
 		maxFailures = 3
 	}
 	return &HealthChecker{
-		process:     p,
-		bus:         bus,
-		interval:    interval,
-		maxFailures: maxFailures,
-		stopCh:      make(chan struct{}),
+		process:      p,
+		bus:          bus,
+		interval:     interval,
+		checkTimeout: 2 * time.Second,
+		maxFailures:  maxFailures,
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -129,11 +131,48 @@ func (h *HealthChecker) check(ctx context.Context) {
 		return
 	}
 
+	respCh := h.process.Responses()
+	if respCh == nil {
+		h.recordFailure(ctx, "responses channel unavailable")
+		return
+	}
+
+	timer := time.NewTimer(h.checkTimeout)
+	defer timer.Stop()
+
+	select {
+	case resp, ok := <-respCh:
+		if !ok {
+			h.recordFailure(ctx, "responses channel closed")
+			return
+		}
+		if !isValidJSONRPC(resp) {
+			h.recordFailure(ctx, "invalid jsonrpc response")
+			return
+		}
+		h.recordSuccess(ctx)
+	case <-timer.C:
+		h.recordFailure(ctx, "ping response timeout")
+	}
+}
+
+func isValidJSONRPC(data []byte) bool {
+	var msg struct {
+		JSONRPC string `json:"jsonrpc"`
+	}
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return false
+	}
+	return msg.JSONRPC == mcp.JSONRPCVersion
+}
+
+func (h *HealthChecker) recordSuccess(ctx context.Context) {
 	h.mu.Lock()
+	wasFailed := h.failures > 0
 	h.failures = 0
 	h.mu.Unlock()
 
-	if h.bus != nil {
+	if wasFailed && h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:   EventHealthOK,
 			Server: h.process.Name(),
