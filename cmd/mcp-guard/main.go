@@ -60,9 +60,10 @@ func runWithConfig(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if err := config.ValidateAndSetDefaults(cfg); err != nil {
-		return fmt.Errorf("validate config: %w", err)
-	}
+
+	// procCtx controls process lifecycle independently from proxy shutdown.
+	procCtx, procCancel := context.WithCancel(context.Background())
+	defer procCancel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -80,7 +81,7 @@ func runWithConfig(configPath string) error {
 	}()
 
 	pool := server.NewPool(cfg.Servers, bus, cfg.Guard.HealthCheckInterval)
-	if err := pool.Start(ctx); err != nil {
+	if err := pool.Start(procCtx); err != nil {
 		return fmt.Errorf("start pool: %w", err)
 	}
 
