@@ -56,7 +56,11 @@ func (s *Server) setupRoutes() {
 
 // Run starts the HTTP server and blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	srv := &http.Server{Addr: s.addr, Handler: s.router}
+	srv := &http.Server{
+		Addr:              s.addr,
+		Handler:           s.router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

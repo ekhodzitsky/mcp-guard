@@ -24,8 +24,8 @@ func (h *handlerSet) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case evt := <-ch:
-			fmt.Fprintf(w, "event: message\n")
-			fmt.Fprintf(w, "data: %s: %s\n\n", evt.Server, evt.Type)
+			_, _ = fmt.Fprintf(w, "event: message\n")
+			_, _ = fmt.Fprintf(w, "data: %s: %s\n\n", evt.Server, evt.Type)
 			flusher.Flush()
 		case <-ctx.Done():
 			return
