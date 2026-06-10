@@ -4,6 +4,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,9 +14,12 @@ import (
 
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/events"
-	"github.com/ekhodzitsky/mcp-guard/internal/telemetry"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
+
+// ErrProcessDead is returned when the server process is not running.
+var ErrProcessDead = errors.New("server process is not running")
 
 // Process represents a single MCP server process.
 type Process struct {
@@ -29,6 +33,8 @@ type Process struct {
 	responses chan []byte
 	mu        sync.RWMutex
 	running   bool
+	stopMu    sync.Mutex
+	stopping  bool
 }
 
 // NewProcess creates a new process handle.
@@ -44,7 +50,7 @@ func NewProcess(name string, cfg config.ServerConfig, bus *events.Bus) *Process 
 // The provided ctx must remain valid for the lifetime of the process;
 // cancelling it prematurely will kill the process.
 func (p *Process) Start(ctx context.Context) error {
-	ctx, span := telemetry.Tracer.Start(ctx, "process.Start")
+	ctx, span := otel.Tracer("mcp-guard").Start(ctx, "process.Start")
 	defer span.End()
 	span.SetAttributes(attribute.String("process", p.name))
 	p.mu.Lock()
@@ -129,9 +135,17 @@ func (p *Process) readLoop() {
 
 // Stop gracefully stops the process.
 func (p *Process) Stop(ctx context.Context) error {
-	ctx, span := telemetry.Tracer.Start(ctx, "process.Stop")
+	ctx, span := otel.Tracer("mcp-guard").Start(ctx, "process.Stop")
 	defer span.End()
 	span.SetAttributes(attribute.String("process", p.name))
+	p.stopMu.Lock()
+	if p.stopping {
+		p.stopMu.Unlock()
+		return nil
+	}
+	p.stopping = true
+	p.stopMu.Unlock()
+
 	p.mu.Lock()
 	cmd := p.cmd
 	running := p.running

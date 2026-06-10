@@ -146,7 +146,7 @@ func (h *HealthChecker) check(ctx context.Context) {
 			h.recordFailure(ctx, "responses channel closed")
 			return
 		}
-		if !isValidJSONRPC(resp) {
+		if !isValidJSONRPC(resp, req.ID) {
 			h.recordFailure(ctx, "invalid jsonrpc response")
 			return
 		}
@@ -156,14 +156,15 @@ func (h *HealthChecker) check(ctx context.Context) {
 	}
 }
 
-func isValidJSONRPC(data []byte) bool {
-	var msg struct {
-		JSONRPC string `json:"jsonrpc"`
-	}
-	if err := json.Unmarshal(data, &msg); err != nil {
+func isValidJSONRPC(data []byte, expectedID any) bool {
+	var resp mcp.JSONRPCResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return false
 	}
-	return msg.JSONRPC == mcp.JSONRPCVersion
+	if resp.JSONRPC != mcp.JSONRPCVersion {
+		return false
+	}
+	return resp.ID == expectedID
 }
 
 func (h *HealthChecker) recordSuccess(ctx context.Context) {
