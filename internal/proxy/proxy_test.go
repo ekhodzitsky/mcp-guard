@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -11,8 +12,10 @@ import (
 	"time"
 
 	"github.com/ekhodzitsky/mcp-guard/internal/audit"
+	"github.com/ekhodzitsky/mcp-guard/internal/cache"
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/events"
+	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
 )
@@ -34,7 +37,7 @@ func TestProxyForward(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: mcp.MethodPing}
 	_, err := p.Forward(ctx, "echo", req)
@@ -51,7 +54,7 @@ func TestProxyForwardUnknownServer(t *testing.T) {
 	defer cancel()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: mcp.MethodPing}
 	_, err := p.Forward(ctx, "unknown", req)
@@ -91,7 +94,7 @@ func TestProxyForwardNotRunning(t *testing.T) {
 	}
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: mcp.MethodPing}
 	_, err := p.Forward(ctx, "echo", req)
@@ -121,7 +124,7 @@ func TestProxyForwardTimeout(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	// Use a short context so the test doesn't take 30s.
 	shortCtx, shortCancel := context.WithTimeout(ctx, 200*time.Millisecond)
@@ -154,7 +157,7 @@ func TestProxyForwardConcurrent(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 5)
@@ -199,7 +202,7 @@ func TestProxyForwardDuplicateID(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 42, Method: mcp.MethodPing}
 
@@ -239,7 +242,7 @@ func TestProxyForwardContextCancellation(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	reqCtx, reqCancel := context.WithCancel(ctx)
 	defer reqCancel()
@@ -285,7 +288,7 @@ func TestProxyRunBasic(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	stdin := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
 	var stdout bytes.Buffer
@@ -318,7 +321,7 @@ func TestProxyRunMalformedJSON(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	stdin := strings.NewReader(`not json` + "\n")
 	var stdout bytes.Buffer
@@ -354,7 +357,7 @@ func TestProxyRunDefaultServerEmptyMultiple(t *testing.T) {
 	defer func() { _ = pool.Stop(ctx) }()
 
 	logger, _ := audit.NewJSONLinesLogger("/dev/null")
-	p := NewProxy(pool, logger, nil)
+	p := NewProxy(pool, logger, nil, nil, nil, nil)
 
 	stdin := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
 	var stdout bytes.Buffer
@@ -367,5 +370,121 @@ func TestProxyRunDefaultServerEmptyMultiple(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, `"error"`) {
 		t.Fatalf("expected error response, got: %s", output)
+	}
+}
+
+func TestProxyForward_CacheHit(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer func() { _ = pool.Stop(ctx) }()
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	schemaCache := cache.NewSchemaCache(1 * time.Minute)
+	cachedResp := mcp.JSONRPCResponse{JSONRPC: "2.0", ID: 1, Result: json.RawMessage(`{"tools":[]}`)}
+	schemaCache.Set("echo", cachedResp)
+
+	p := NewProxy(pool, logger, nil, nil, nil, schemaCache)
+
+	req := mcp.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: mcp.MethodToolsList}
+	resp, err := p.Forward(ctx, "echo", req)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if fmt.Sprint(resp.Result) != fmt.Sprint(cachedResp.Result) {
+		t.Fatalf("expected cached response, got: %v", resp)
+	}
+}
+
+func TestProxyForward_PermissionDenied(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer func() { _ = pool.Stop(ctx) }()
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	perms := map[string]*guard.PermissionChecker{
+		"echo": guard.NewPermissionChecker(config.PermissionsConfig{Deny: []string{"blocked_tool"}}),
+	}
+	p := NewProxy(pool, logger, nil, perms, nil, nil)
+
+	req := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  mcp.MethodToolsCall,
+		Params:  json.RawMessage(`{"name":"blocked_tool"}`),
+	}
+	_, err := p.Forward(ctx, "echo", req)
+	if err == nil {
+		t.Fatal("expected error for permission denied")
+	}
+	if !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("expected permission denied error, got: %v", err)
+	}
+}
+
+func TestProxyForward_RateLimitExceeded(t *testing.T) {
+	bus := events.NewBus()
+	cfg := config.ServerConfig{
+		Command: "cat",
+		Timeout: config.TimeoutConfig{ToolsCall: 30 * time.Second, ToolsList: 10 * time.Second},
+	}
+	pool := server.NewPool(map[string]config.ServerConfig{"echo": cfg}, bus, 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := pool.Start(ctx); err != nil {
+		t.Fatalf("pool start: %v", err)
+	}
+	defer func() { _ = pool.Stop(ctx) }()
+
+	logger, _ := audit.NewJSONLinesLogger("/dev/null")
+	// Rate limit of 0 should block everything (rpm=0 means unlimited, so set rpm=1 and call twice).
+	limiters := map[string]*guard.RateLimiter{
+		"echo": guard.NewRateLimiter(1, 0),
+	}
+	p := NewProxy(pool, logger, nil, nil, limiters, nil)
+
+	req := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  mcp.MethodToolsCall,
+		Params:  json.RawMessage(`{"name":"some_tool"}`),
+	}
+	// First call should succeed (rate limiter allows it).
+	_, err := p.Forward(ctx, "echo", req)
+	if err != nil {
+		t.Fatalf("first forward: %v", err)
+	}
+
+	// Second call should exceed rate limit.
+	req.ID = 2
+	_, err = p.Forward(ctx, "echo", req)
+	if err == nil {
+		t.Fatal("expected error for rate limit exceeded")
+	}
+	if !strings.Contains(err.Error(), "rate limit exceeded") {
+		t.Fatalf("expected rate limit exceeded error, got: %v", err)
 	}
 }

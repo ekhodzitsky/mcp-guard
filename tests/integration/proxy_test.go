@@ -33,7 +33,7 @@ func setupProxyIntegration(t *testing.T) (*proxy.Proxy, *server.Pool, context.Co
 		t.Fatalf("pool start: %v", err)
 	}
 
-	p := proxy.NewProxy(pool, &audit.NoopLogger{}, nil)
+	p := proxy.NewProxy(pool, &audit.NoopLogger{}, nil, nil, nil, nil)
 	return p, pool, ctx, cancel
 }
 

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/ekhodzitsky/mcp-guard/internal/audit"
+	"github.com/ekhodzitsky/mcp-guard/internal/cache"
+	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
 	"github.com/ekhodzitsky/mcp-guard/pkg/mcp"
 )
@@ -32,10 +34,17 @@ type Proxy struct {
 
 	readers   map[*server.Process]struct{}
 	readersMu sync.Mutex
+
+	permissions  map[string]*guard.PermissionChecker
+	rateLimiters map[string]*guard.RateLimiter
+	schemaCache  *cache.SchemaCache
 }
 
 // NewProxy creates a new proxy.
-func NewProxy(pool *server.Pool, logger audit.Logger, maxCalls map[string]int) *Proxy {
+func NewProxy(pool *server.Pool, logger audit.Logger, maxCalls map[string]int,
+	permissions map[string]*guard.PermissionChecker,
+	rateLimiters map[string]*guard.RateLimiter,
+	schemaCache *cache.SchemaCache) *Proxy {
 	semaphores := make(map[string]chan struct{})
 	for name, limit := range maxCalls {
 		if limit > 0 {
@@ -43,17 +52,61 @@ func NewProxy(pool *server.Pool, logger audit.Logger, maxCalls map[string]int) *
 		}
 	}
 	return &Proxy{
-		pool:       pool,
-		logger:     logger,
-		semaphores: semaphores,
-		pending:    make(map[string]pendingResp),
-		readers:    make(map[*server.Process]struct{}),
+		pool:         pool,
+		logger:       logger,
+		semaphores:   semaphores,
+		pending:      make(map[string]pendingResp),
+		readers:      make(map[*server.Process]struct{}),
+		permissions:  permissions,
+		rateLimiters: rateLimiters,
+		schemaCache:  schemaCache,
 	}
+}
+
+func extractToolName(params json.RawMessage) string {
+	var p struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(params, &p)
+	return p.Name
 }
 
 // Forward sends a JSON-RPC request to the named server and returns the response.
 func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCRequest) (mcp.JSONRPCResponse, error) {
 	var zero mcp.JSONRPCResponse
+
+	// Schema cache for tools/list.
+	if req.Method == mcp.MethodToolsList && p.schemaCache != nil {
+		if cached, ok := p.schemaCache.Get(serverName); ok {
+			// Audit log cached response.
+			if p.logger != nil {
+				_ = p.logger.Log(ctx, audit.LogEntry{
+					Timestamp: time.Now().UTC(),
+					Server:    serverName,
+					Direction: "response",
+					Message:   cached,
+				})
+			}
+			return cached, nil
+		}
+	}
+
+	// Permission and rate limit checks for tools/call.
+	if req.Method == mcp.MethodToolsCall {
+		toolName := extractToolName(req.Params)
+
+		if checker := p.permissions[serverName]; checker != nil && toolName != "" {
+			if !checker.IsAllowed(toolName) {
+				return zero, fmt.Errorf("tool %q is not permitted: %w", toolName, mcp.ErrInvalidConfig)
+			}
+		}
+
+		if lim := p.rateLimiters[serverName]; lim != nil && toolName != "" {
+			if !lim.Allow(toolName) {
+				return zero, fmt.Errorf("rate limit exceeded for tool %q: %w", toolName, mcp.ErrTimeout)
+			}
+		}
+	}
 
 	proc := p.pool.Get(serverName)
 	if proc == nil {
@@ -101,6 +154,16 @@ func (p *Proxy) Forward(ctx context.Context, serverName string, req mcp.JSONRPCR
 	})
 	if err != nil {
 		return zero, err
+	}
+
+	// Cache tools/list responses.
+	if req.Method == mcp.MethodToolsList && p.schemaCache != nil {
+		p.schemaCache.Set(serverName, resp)
+	}
+
+	// Invalidate cache on list_changed notification.
+	if req.Method == mcp.MethodToolsListChanged && p.schemaCache != nil {
+		p.schemaCache.Invalidate(serverName)
 	}
 
 	// Audit log response.

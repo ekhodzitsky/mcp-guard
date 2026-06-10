@@ -14,8 +14,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ekhodzitsky/mcp-guard/internal/audit"
+	"github.com/ekhodzitsky/mcp-guard/internal/cache"
 	"github.com/ekhodzitsky/mcp-guard/internal/config"
 	"github.com/ekhodzitsky/mcp-guard/internal/events"
+	"github.com/ekhodzitsky/mcp-guard/internal/guard"
 	"github.com/ekhodzitsky/mcp-guard/internal/proxy"
 	"github.com/ekhodzitsky/mcp-guard/internal/server"
 )
@@ -107,7 +109,22 @@ func runWithConfig(configPath string) error {
 	for name := range cfg.Servers {
 		maxCalls[name] = cfg.Guard.MaxConcurrentCalls
 	}
-	p := proxy.NewProxy(pool, auditLogger, maxCalls)
+
+	permissions := make(map[string]*guard.PermissionChecker)
+	rateLimiters := make(map[string]*guard.RateLimiter)
+	var schemaCache *cache.SchemaCache
+	if cfg.Guard.SchemaCacheTTL > 0 {
+		schemaCache = cache.NewSchemaCache(cfg.Guard.SchemaCacheTTL)
+	}
+
+	for name, sc := range cfg.Servers {
+		if len(sc.Permissions.Allow) > 0 || len(sc.Permissions.Deny) > 0 {
+			permissions[name] = guard.NewPermissionChecker(sc.Permissions)
+		}
+		// Rate limits would come from config; for now, skip if not configured.
+	}
+
+	p := proxy.NewProxy(pool, auditLogger, maxCalls, permissions, rateLimiters, schemaCache)
 
 	// Determine default server deterministically.
 	var defaultServer string
